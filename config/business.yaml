@@ -1,0 +1,19 @@
+# Налаштування бізнесу. Під нового клієнта змінюється лише цей файл і bot/texts.py.
+
+business:
+  name: "Demo Barber"
+  address: "м. Київ, вул. Хрещатик, 1"
+  phone: "+380 44 000 00 00"
+  map_url: "https://maps.google.com/?q=Хрещатик+1,+Київ"
+  instagram: "https://instagram.com/demo.barber"
+
+booking:
+  timezone: "Europe/Kyiv"
+  slot_step_min: 15            # крок слотів, хв
+  horizon_days: 14             # на скільки днів наперед можна записатися
+  min_lead_time_min: 60        # мінімальний час від «зараз» до запису, хв
+  cancel_deadline_hours: 2     # клієнт може скасувати/перенести не пізніше ніж за N год
+
+reminders:
+  before_24h: true
+  before_2h: true

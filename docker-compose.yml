@@ -1,0 +1,9 @@
+services:
+  bot:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      # Налаштування бізнесу можна правити без перезбирання образу
+      - ./config:/app/config:ro
