@@ -14,14 +14,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_BUSINESS_CONFIG = BASE_DIR / "config" / "business.yaml"
 
 
-class Settings(BaseSettings):
-    """Секрети й параметри середовища. Читаються з .env або змінних оточення."""
+class BaseAppSettings(BaseSettings):
+    """Параметри середовища без токена бота: потрібні міграціям і seed."""
 
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env", env_file_encoding="utf-8", extra="ignore"
     )
 
-    bot_token: SecretStr
     admin_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
     demo_mode: bool = False
     database_url: str = "sqlite+aiosqlite:///data/bot.db"
@@ -39,6 +38,12 @@ class Settings(BaseSettings):
                 return json.loads(value)
             return [part.strip() for part in value.split(",") if part.strip()]
         return value
+
+
+class Settings(BaseAppSettings):
+    """Повні налаштування бота. Читаються з .env або змінних оточення."""
+
+    bot_token: SecretStr
 
 
 class BusinessInfo(BaseModel):

@@ -9,6 +9,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
+COPY alembic.ini .
 COPY bot ./bot
 COPY config ./config
 COPY seed ./seed
@@ -17,4 +18,5 @@ COPY migrations ./migrations
 RUN useradd --create-home --uid 1000 app && mkdir -p /app/data && chown app:app /app/data
 USER app
 
-CMD ["python", "-m", "bot.main"]
+# Спершу застосовуємо міграції, потім стартуємо бота
+CMD ["sh", "-c", "alembic upgrade head && python -m bot.main"]
