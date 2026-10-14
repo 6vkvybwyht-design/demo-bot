@@ -1,0 +1,10 @@
+aiogram==3.31.0
+pydantic==2.13.5
+pydantic-settings==2.16.0
+PyYAML==6.0.3
+SQLAlchemy[asyncio]==2.1.4
+aiosqlite==0.22.1
+alembic==1.20.0
+APScheduler==3.11.3
+# База часових поясів для zoneinfo: у slim-образах Docker системної tzdata немає
+tzdata==2025.2
