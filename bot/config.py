@@ -25,6 +25,17 @@ class BaseAppSettings(BaseSettings):
     demo_mode: bool = False
     database_url: str = "sqlite+aiosqlite:///data/bot.db"
     business_config_path: Path = DEFAULT_BUSINESS_CONFIG
+    # Щоденний бекап SQLite: куди складати й скільки останніх копій зберігати
+    backup_dir: Path = Path("data/backups")
+    backup_keep: int = Field(default=7, ge=1)
+    # Файл логу (з ротацією). Порожньо — лише в консоль (як у Docker)
+    log_file: Path | None = None
+
+    @field_validator("log_file", mode="before")
+    @classmethod
+    def _empty_log_file(cls, value: Any) -> Any:
+        # «LOG_FILE=» у .env означає «без файлу», а не поточну папку
+        return None if isinstance(value, str) and not value.strip() else value
 
     @field_validator("admin_ids", mode="before")
     @classmethod

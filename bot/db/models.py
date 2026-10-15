@@ -4,6 +4,7 @@ from datetime import UTC, datetime, time
 from enum import StrEnum
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     CheckConstraint,
     DateTime,
@@ -205,3 +206,14 @@ class Booking(Base):
     client: Mapped[Client] = relationship()
     master: Mapped[Master] = relationship()
     service: Mapped[Service] = relationship()
+
+
+class FsmState(Base):
+    """Стан діалогу aiogram (FSM): незавершений запис не губиться після перезапуску бота."""
+
+    __tablename__ = "fsm_states"
+
+    key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    state: Mapped[str | None] = mapped_column(String(200))
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
