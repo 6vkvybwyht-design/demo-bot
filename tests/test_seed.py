@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, time
 
 from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
 
 from bot.db.models import Booking, BookingStatus, Client, Master, Service, TimeOff, WorkingHours
 from seed.demo_data import BREAK_END, BREAK_START, DAY_END, DAY_START, reset_demo_data
@@ -43,7 +44,9 @@ async def test_seed_bookings_are_realistic(session, business):
     step = business.booking.slot_step_min
     bookings = (await session.scalars(select(Booking).order_by(Booking.start_dt))).all()
     time_off = (await session.scalars(select(TimeOff))).all()
-    masters = {m.id: m for m in (await session.scalars(select(Master))).all()}
+    # Зв'язки завантажуємо явно: ліниве довантаження в async-сесії не працює
+    masters = await session.scalars(select(Master).options(selectinload(Master.services)))
+    services_by_master = {m.id: {s.id for s in m.services} for m in masters}
 
     by_master: dict[int, list[Booking]] = {}
     for b in bookings:
@@ -53,7 +56,7 @@ async def test_seed_bookings_are_realistic(session, business):
         assert DAY_START <= start.time() and end.time() <= DAY_END
         assert end.time() <= BREAK_START or start.time() >= BREAK_END, "запис у перерву"
         assert start.minute % step == 0
-        assert b.service in masters[b.master_id].services
+        assert b.service_id in services_by_master[b.master_id]
         assert not any(
             t.master_id == b.master_id and b.start_dt < t.end_dt and t.start_dt < b.end_dt
             for t in time_off
