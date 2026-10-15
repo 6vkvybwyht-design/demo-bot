@@ -82,3 +82,33 @@ REMINDERS_BOTH = "Ми нагадаємо за день і за 2 години."
 REMINDER_24H = "Ми нагадаємо за день."
 REMINDER_2H = "Ми нагадаємо за 2 години."
 MANAGE_BOOKING = "Скасувати чи перенести запис можна в «Мої записи»."
+
+# Контакти
+CONTACTS = "<b>{name}</b>\n\n📍 {address}\n📞 {phone}"
+BTN_MAP = "🗺 Відкрити на карті"
+BTN_INSTAGRAM = "📷 Instagram"
+
+# Мої записи
+MY_BOOKINGS_EMPTY = "У вас немає майбутніх записів. Щоб записатися, натисніть «📅 Записатися»."
+MY_BOOKINGS_HEADER = "Ваші майбутні записи: {count}"
+BTN_CANCEL_BOOKING = "❌ Скасувати"
+BTN_MOVE_BOOKING = "🔁 Перенести"
+CHANGE_DEADLINE_PASSED = (
+    "Скасувати чи перенести запис у боті можна не пізніше ніж за {hours} год до візиту. "
+    "Зателефонуйте нам: {phone}"
+)
+BOOKING_GONE = "Цей запис уже неактуальний: його скасовано або час минув."
+
+# Скасування
+CANCEL_CONFIRM = "Скасувати цей запис?\n\n{summary}"
+BTN_CANCEL_YES = "Так, скасувати"
+BTN_CANCEL_NO = "Ні, залишити"
+BOOKING_CANCELLED = "❌ Запис скасовано.\n\n{summary}"
+
+# Перенесення
+MOVE_CHOOSE_DATE = "Перенесення запису. Оберіть нову дату:"
+MOVE_CHOOSE_TIME = "Перенесення запису. Оберіть новий час:"
+MOVE_CONFIRM = "Перенести запис?\n\nБуло: {old}\nСтане: <b>{new}</b>\n\n{summary}"
+MOVE_WHEN = "{date}, {time}"
+BTN_MOVE_CONFIRM = "✅ Перенести"
+BOOKING_MOVED = "✅ Запис перенесено!\n\n{summary}\n\n📍 {address}\n\n{after}"

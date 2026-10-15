@@ -8,3 +8,9 @@ class BookingStates(StatesGroup):
     time = State()
     phone = State()
     confirm = State()
+
+
+class RescheduleStates(StatesGroup):
+    date = State()
+    time = State()
+    confirm = State()

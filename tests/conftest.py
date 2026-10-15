@@ -30,7 +30,7 @@ def _detach_routers():
     # Модульний router в aiogram можна приєднати лише до одного Dispatcher,
     # а тести створюють новий диспетчер на кожен тест
     yield
-    from bot.handlers import client, fallback
+    from bot.handlers import client, fallback, my_bookings
 
-    for module in (client, fallback):
+    for module in (client, fallback, my_bookings):
         module.router._parent_router = None

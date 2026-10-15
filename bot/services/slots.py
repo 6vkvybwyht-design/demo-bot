@@ -278,10 +278,11 @@ async def get_available_dates(
     master_id: int | None,
     rules: BookingRules,
     now: datetime,
+    exclude_booking_id: int | None = None,
 ) -> list[date]:
     """Дати в межах горизонту запису, на які є хоча б один вільний слот.
 
-    `master_id=None` — «будь-який майстер».
+    `master_id=None` — «будь-який майстер». `exclude_booking_id` — для перенесення.
     """
     today = now.astimezone(rules.tz).date()
     dates: list[date] = []
@@ -296,7 +297,13 @@ async def get_available_dates(
         else:
             has_slots = bool(
                 await get_free_slots(
-                    session, master_id=master_id, service=service, day=day, rules=rules, now=now
+                    session,
+                    master_id=master_id,
+                    service=service,
+                    day=day,
+                    rules=rules,
+                    now=now,
+                    exclude_booking_id=exclude_booking_id,
                 )
             )
         if has_slots:

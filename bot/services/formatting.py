@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from aiogram import html
 
 from bot import texts
+from bot.config import BusinessInfo
 from bot.db.models import Service
 from bot.services.booking import PlannedReminders
 
@@ -61,11 +62,30 @@ def reminders_note(reminders: PlannedReminders) -> str:
     return ""
 
 
-def booking_done_text(
-    *, summary: str, address: str, reminders: PlannedReminders
-) -> str:
-    after = " ".join(filter(None, [reminders_note(reminders), texts.MANAGE_BOOKING]))
-    return texts.BOOKING_DONE.format(summary=summary, address=html.quote(address), after=after)
+def _after_booking(reminders: PlannedReminders) -> str:
+    return " ".join(filter(None, [reminders_note(reminders), texts.MANAGE_BOOKING]))
+
+
+def booking_done_text(*, summary: str, address: str, reminders: PlannedReminders) -> str:
+    return texts.BOOKING_DONE.format(
+        summary=summary, address=html.quote(address), after=_after_booking(reminders)
+    )
+
+
+def booking_moved_text(*, summary: str, address: str, reminders: PlannedReminders) -> str:
+    return texts.BOOKING_MOVED.format(
+        summary=summary, address=html.quote(address), after=_after_booking(reminders)
+    )
+
+
+def fmt_when(start: datetime, tz: ZoneInfo) -> str:
+    return texts.MOVE_WHEN.format(date=fmt_date(start.astimezone(tz).date()), time=fmt_time(start, tz))
+
+
+def contacts_text(info: BusinessInfo) -> str:
+    return texts.CONTACTS.format(
+        name=html.quote(info.name), address=html.quote(info.address), phone=html.quote(info.phone)
+    )
 
 
 def booking_summary(

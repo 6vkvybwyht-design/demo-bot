@@ -14,10 +14,12 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot import texts
 from bot.db.models import Master, Service
+from bot.config import BusinessInfo
 from bot.keyboards.callbacks import (
     ANY_MASTER,
     DateCb,
     MasterCb,
+    MyBookingCb,
     NavCb,
     NoopCb,
     ServiceCb,
@@ -100,3 +102,43 @@ def share_phone_kb() -> ReplyKeyboardMarkup:
         resize_keyboard=True,
         one_time_keyboard=True,
     )
+
+
+def move_confirm_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text=texts.BTN_MOVE_CONFIRM, callback_data=NavCb(action="confirm"))
+    _with_back(builder).adjust(1)
+    return builder.as_markup()
+
+
+def booking_card_kb(booking_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=texts.BTN_CANCEL_BOOKING, callback_data=MyBookingCb(action="cancel", booking_id=booking_id)
+    )
+    builder.button(
+        text=texts.BTN_MOVE_BOOKING, callback_data=MyBookingCb(action="move", booking_id=booking_id)
+    )
+    return builder.as_markup()
+
+
+def cancel_confirm_kb(booking_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=texts.BTN_CANCEL_YES, callback_data=MyBookingCb(action="cancel_yes", booking_id=booking_id)
+    )
+    builder.button(
+        text=texts.BTN_CANCEL_NO, callback_data=MyBookingCb(action="cancel_no", booking_id=booking_id)
+    )
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def contacts_kb(info: BusinessInfo) -> InlineKeyboardMarkup | None:
+    builder = InlineKeyboardBuilder()
+    if info.map_url:
+        builder.button(text=texts.BTN_MAP, url=info.map_url)
+    if info.instagram:
+        builder.button(text=texts.BTN_INSTAGRAM, url=info.instagram)
+    builder.adjust(1)
+    return builder.as_markup() if info.map_url or info.instagram else None
