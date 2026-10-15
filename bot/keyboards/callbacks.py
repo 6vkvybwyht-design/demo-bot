@@ -21,3 +21,7 @@ class TimeCb(CallbackData, prefix="tm"):
 
 class NavCb(CallbackData, prefix="nav"):
     action: str  # back / confirm
+
+
+class NoopCb(CallbackData, prefix="noop"):
+    """Кнопка-заголовок без дії (наприклад, «Ранок» над слотами)."""

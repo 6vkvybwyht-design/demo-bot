@@ -51,7 +51,7 @@ async def test_client_created_once_and_phone_saved(session):
     second = await svc.get_or_create_client(session, 5, "Інше ім'я")
     assert first.id == second.id and second.name == "Олег"
 
-    client = await svc.save_client_phone(session, 5, "Олег", "380501234567")
+    client = await svc.save_client_phone(session, 5, "Олег", "+380501234567")
     assert client.phone == "+380501234567"
     assert (await svc.get_client(session, 5)).phone == "+380501234567"
 

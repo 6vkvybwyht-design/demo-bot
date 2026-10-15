@@ -8,6 +8,7 @@ from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from enum import Enum
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -96,6 +97,35 @@ def compute_free_slots(
             slots.append(start)
         start += step
     return slots
+
+
+class DayPart(Enum):
+    MORNING = "morning"  # до 12:00
+    AFTERNOON = "afternoon"  # 12:00–17:00
+    EVENING = "evening"  # після 17:00
+
+
+AFTERNOON_START = time(12, 0)
+EVENING_START = time(17, 0)
+
+
+def day_part(start: datetime, tz: ZoneInfo) -> DayPart:
+    local = start.astimezone(tz).time()
+    if local < AFTERNOON_START:
+        return DayPart.MORNING
+    if local < EVENING_START:
+        return DayPart.AFTERNOON
+    return DayPart.EVENING
+
+
+def group_by_day_part(
+    starts: Iterable[datetime], tz: ZoneInfo
+) -> list[tuple[DayPart, list[datetime]]]:
+    """Групує слоти за частинами дня (за місцевим часом). Порожні групи пропускає."""
+    groups: dict[DayPart, list[datetime]] = {part: [] for part in DayPart}
+    for start in sorted(starts):
+        groups[day_part(start, tz)].append(start)
+    return [(part, items) for part, items in groups.items() if items]
 
 
 def pick_least_busy_master(candidate_ids: Sequence[int], bookings_per_master: Counter) -> int:

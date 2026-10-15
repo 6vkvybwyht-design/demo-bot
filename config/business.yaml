@@ -2,9 +2,9 @@
 
 business:
   name: "Demo Barber"
-  address: "м. Київ, вул. Хрещатик, 1"
-  phone: "+380 44 000 00 00"
-  map_url: "https://maps.google.com/?q=Хрещатик+1,+Київ"
+  address: "м. Львів, пл. Ринок, 1"
+  phone: "+380 32 000 00 00"
+  map_url: "https://maps.google.com/?q=площа+Ринок+1,+Львів"
   instagram: "https://instagram.com/demo.barber"
 
 booking:

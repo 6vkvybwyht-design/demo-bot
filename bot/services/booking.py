@@ -1,11 +1,12 @@
 """Створення записів і робота з клієнтами."""
 
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.config import BookingRules
+from bot.config import BookingRules, Reminders
 from bot.db.models import Booking, Client, Master, Service
 from bot.services import slots
 
@@ -30,16 +31,32 @@ async def get_or_create_client(session: AsyncSession, telegram_id: int, name: st
 async def save_client_phone(
     session: AsyncSession, telegram_id: int, name: str, phone: str
 ) -> Client:
+    """Зберігає вже нормалізований номер (див. bot/services/phone.py)."""
     client = await get_or_create_client(session, telegram_id, name)
-    client.phone = normalize_phone(phone)
+    client.phone = phone
     await session.commit()
     return client
 
 
-def normalize_phone(phone: str) -> str:
-    # Telegram іноді надсилає номер без «+»
-    phone = phone.strip().replace(" ", "")
-    return phone if phone.startswith("+") else f"+{phone}"
+@dataclass(frozen=True)
+class PlannedReminders:
+    before_24h: bool
+    before_2h: bool
+
+
+def planned_reminders(start: datetime, created_at: datetime, reminders: Reminders) -> PlannedReminders:
+    """Які нагадування отримає запис.
+
+    Записи, створені менше ніж за 2 год до візиту, нагадувань не отримують;
+    нагадування за добу має сенс, лише якщо до візиту більше доби.
+    """
+    lead = start - created_at
+    if lead < timedelta(hours=2):
+        return PlannedReminders(before_24h=False, before_2h=False)
+    return PlannedReminders(
+        before_24h=reminders.before_24h and lead > timedelta(hours=24),
+        before_2h=reminders.before_2h,
+    )
 
 
 def is_within_horizon(day: date, rules: BookingRules, now: datetime) -> bool:

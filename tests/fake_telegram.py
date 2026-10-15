@@ -122,6 +122,10 @@ class TelegramUser:
     def buttons(self) -> list[tuple[str, str]]:
         return [(b.text, b.callback_data) for row in self.last_inline().inline_keyboard for b in row]
 
+    def slot_buttons(self) -> list[tuple[str, str]]:
+        """Кнопки часу (без заголовків частин дня й «Назад»)."""
+        return [(label, data) for label, data in self.buttons() if data.startswith("tm:")]
+
     def button(self, text: str) -> str:
         for label, data in self.buttons():
             if label == text:
