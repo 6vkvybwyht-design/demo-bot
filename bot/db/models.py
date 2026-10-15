@@ -177,9 +177,13 @@ class Booking(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), index=True)
-    master_id: Mapped[int] = mapped_column(ForeignKey("masters.id"))
-    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"))
+    # RESTRICT: історія записів не повинна зникати разом із майстром, послугою
+    # чи клієнтом. Майстрів і послуги приховуємо через is_active, а не видаляємо.
+    client_id: Mapped[int] = mapped_column(
+        ForeignKey("clients.id", ondelete="RESTRICT"), index=True
+    )
+    master_id: Mapped[int] = mapped_column(ForeignKey("masters.id", ondelete="RESTRICT"))
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id", ondelete="RESTRICT"))
     start_dt: Mapped[datetime] = mapped_column(UTCDateTime)
     end_dt: Mapped[datetime] = mapped_column(UTCDateTime)
     status: Mapped[BookingStatus] = mapped_column(
