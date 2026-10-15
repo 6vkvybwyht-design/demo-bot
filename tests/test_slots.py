@@ -9,6 +9,7 @@ from bot.config import BookingRules
 from bot.db.models import Booking, BookingStatus, Client, Master, Service, TimeOff, WorkingHours
 from bot.services.slots import (
     compute_free_slots,
+    day_bounds_utc,
     get_available_dates,
     get_free_slots,
     get_free_slots_any_master,
@@ -120,6 +121,19 @@ def test_after_switch_to_winter_time():
     day = date(2026, 10, 26)
     result = slots(hours(), day=day)
     assert result[0] == datetime(2026, 10, 26, 8, 0, tzinfo=UTC)
+
+
+def test_on_switch_to_winter_time_day():
+    # Сам день переходу — неділя 25.10.2026: о 04:00 годинник переводять на 03:00,
+    # тож доба триває 25 годин. Графік передаємо явно, незважаючи на вихідний у демо.
+    day = date(2026, 10, 25)
+    start, end = day_bounds_utc(day, KYIV)
+    assert end - start == timedelta(hours=25)
+    assert start == datetime(2026, 10, 24, 21, 0, tzinfo=UTC)  # 00:00 ще за літнім часом
+
+    result = slots(hours(break_=None), day=day, duration=60)
+    assert result[0] == datetime(2026, 10, 25, 8, 0, tzinfo=UTC)  # 10:00 уже за зимовим
+    assert result[-1] == datetime(2026, 10, 25, 17, 0, tzinfo=UTC)  # 19:00
 
 
 def test_subtract_intervals():
