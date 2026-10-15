@@ -20,6 +20,7 @@ from bot.db.models import (
     Booking,
     BookingStatus,
     Client,
+    FsmState,
     Master,
     MasterService,
     Service,
@@ -82,7 +83,8 @@ class SeedSummary:
 
 async def clear_all(session: AsyncSession) -> None:
     # Порядок важливий через зовнішні ключі
-    for model in (Booking, TimeOff, WorkingHours, MasterService, Client, Master, Service):
+    # FsmState — незавершені діалоги посилаються на дані, яких після скидання не буде
+    for model in (FsmState, Booking, TimeOff, WorkingHours, MasterService, Client, Master, Service):
         await session.execute(delete(model))
 
 

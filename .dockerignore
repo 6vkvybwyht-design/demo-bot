@@ -1,0 +1,10 @@
+# Не передаємо в Docker зайве й секрети
+.venv/
+venv/
+.git/
+.env
+data/
+logs/
+**/__pycache__/
+.pytest_cache/
+tests/

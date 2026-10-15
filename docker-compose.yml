@@ -7,3 +7,9 @@ services:
       - ./data:/app/data
       # Налаштування бізнесу можна правити без перезбирання образу
       - ./config:/app/config:ro
+    # Обмеження логів Docker, щоб вони не заповнили диск сервера
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

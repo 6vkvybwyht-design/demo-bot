@@ -1,7 +1,13 @@
 import pytest
 from pydantic import ValidationError
 
-from bot.config import DEFAULT_BUSINESS_CONFIG, BookingRules, Settings, load_business_config
+from bot.config import (
+    DEFAULT_BUSINESS_CONFIG,
+    BaseAppSettings,
+    BookingRules,
+    Settings,
+    load_business_config,
+)
 
 
 def test_business_yaml_loads():
@@ -41,3 +47,13 @@ def test_settings_from_env(monkeypatch):
     assert settings.bot_token.get_secret_value() == "123:abc"
     assert settings.demo_mode is True
     assert settings.admin_ids == []
+
+
+def test_log_file_setting(monkeypatch):
+    monkeypatch.setenv("LOG_FILE", "")
+    assert BaseAppSettings(_env_file=None).log_file is None
+    monkeypatch.setenv("LOG_FILE", "logs/bot.log")
+    assert str(BaseAppSettings(_env_file=None).log_file) == "logs/bot.log"
+    monkeypatch.delenv("LOG_FILE")
+    settings = BaseAppSettings(_env_file=None)
+    assert settings.log_file is None and settings.backup_keep == 7
