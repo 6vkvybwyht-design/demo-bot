@@ -33,11 +33,13 @@ Event = Message | CallbackQuery
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, business: BusinessConfig, state: FSMContext) -> None:
+async def cmd_start(
+    message: Message, business: BusinessConfig, state: FSMContext, settings: Settings
+) -> None:
     await state.clear()
     await message.answer(
         texts.WELCOME.format(name=html.quote(business.business.name)),
-        reply_markup=main_menu_kb(),
+        reply_markup=main_menu_kb(settings.demo_mode),
     )
 
 
@@ -263,42 +265,46 @@ async def pick_time(
 
 @router.message(BookingStates.phone, F.contact)
 async def got_phone(
-    message: Message, state: FSMContext, session: AsyncSession, business: BusinessConfig
+    message: Message, state: FSMContext, session: AsyncSession, business: BusinessConfig,
+    settings: Settings,
 ) -> None:
     if message.contact.user_id != message.from_user.id:
         await message.answer(texts.PHONE_NOT_OWN, reply_markup=kb.share_phone_kb())
         return
     phone = normalize_contact_phone(message.contact.phone_number)
-    await _phone_received(message, phone, state, session, business)
+    await _phone_received(message, phone, state, session, business, settings)
 
 
 async def _phone_received(
-    message: Message, phone: str, state: FSMContext, session: AsyncSession, business: BusinessConfig
+    message: Message, phone: str, state: FSMContext, session: AsyncSession,
+    business: BusinessConfig, settings: Settings,
 ) -> None:
     await booking_service.save_client_phone(
         session, message.from_user.id, message.from_user.full_name, phone
     )
-    await message.answer(texts.PHONE_SAVED, reply_markup=main_menu_kb())
+    await message.answer(texts.PHONE_SAVED, reply_markup=main_menu_kb(settings.demo_mode))
     await show_confirm(message, state, session, business)
 
 
 @router.message(BookingStates.phone, F.text == texts.BTN_BACK)
 async def phone_back(
-    message: Message, state: FSMContext, session: AsyncSession, business: BusinessConfig
+    message: Message, state: FSMContext, session: AsyncSession, business: BusinessConfig,
+    settings: Settings,
 ) -> None:
-    await message.answer(texts.BACK_TO_TIMES, reply_markup=main_menu_kb())
+    await message.answer(texts.BACK_TO_TIMES, reply_markup=main_menu_kb(settings.demo_mode))
     await show_times(message, state, session, business)
 
 
 @router.message(BookingStates.phone, F.text)
 async def got_phone_text(
-    message: Message, state: FSMContext, session: AsyncSession, business: BusinessConfig
+    message: Message, state: FSMContext, session: AsyncSession, business: BusinessConfig,
+    settings: Settings,
 ) -> None:
     phone = parse_ua_phone(message.text)
     if phone is None:
         await message.answer(texts.PHONE_INVALID, reply_markup=kb.share_phone_kb())
         return
-    await _phone_received(message, phone, state, session, business)
+    await _phone_received(message, phone, state, session, business, settings)
 
 
 @router.message(BookingStates.phone)
@@ -337,10 +343,14 @@ async def confirm_booking(
     await callback.message.edit_text(
         booking_done_text(summary=summary, address=business.business.address, reminders=reminders)
     )
-    await notifications.notify_staff(
+    owner_text = await notifications.notify_staff(
         bot, session, booking_id=booking.id, template=texts.NOTIFY_NEW,
         admin_ids=settings.admin_ids, business=business,
+        demo_mode=settings.demo_mode, actor_id=callback.from_user.id,
     )
+    if settings.demo_mode:
+        # Відвідувач демо одразу бачить і другу сторону — сповіщення власника
+        await callback.message.answer(texts.DEMO_OWNER_VIEW.format(notification=owner_text))
 
 
 @router.callback_query(NoopCb.filter())

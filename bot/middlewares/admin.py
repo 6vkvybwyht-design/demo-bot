@@ -6,13 +6,14 @@ from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
 from bot import texts
-from bot.services.admin import is_admin
+from bot.services.demo import viewer_for
 
 logger = logging.getLogger(__name__)
 
 
 class AdminOnlyMiddleware(BaseMiddleware):
-    """Пропускає до хендлерів адмінки лише ADMIN_IDS.
+    """Пропускає до хендлерів адмінки лише ADMIN_IDS (а в демо-режимі — будь-кого
+    як «демо-власника»). Передає в хендлер `viewer` — хто дивиться і що йому можна.
 
     Вішається на роутер адмінки як inner-middleware, тож спрацьовує перед
     кожним його хендлером: командою, введенням тексту й кожною кнопкою.
@@ -25,7 +26,9 @@ class AdminOnlyMiddleware(BaseMiddleware):
         data: dict[str, Any],
     ) -> Any:
         user = data.get("event_from_user")
-        if user is not None and is_admin(user.id, data["settings"]):
+        viewer = viewer_for(user.id, data["settings"]) if user is not None else None
+        if viewer is not None:
+            data["viewer"] = viewer
             return await handler(event, data)
 
         logger.warning("Спроба доступу до адмінки без прав: user_id=%s", user.id if user else None)

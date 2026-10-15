@@ -13,7 +13,10 @@ async def test_start_greets_with_business_name_and_menu():
     business = load_business_config(DEFAULT_BUSINESS_CONFIG)
     message = AsyncMock()
 
-    await cmd_start(message, business=business, state=AsyncMock())
+    await cmd_start(
+        message, business=business, state=AsyncMock(),
+        settings=Settings(_env_file=None, bot_token="123:abc"),
+    )
 
     message.answer.assert_awaited_once()
     text = message.answer.await_args.args[0]
@@ -32,3 +35,14 @@ async def test_dispatcher_builds():
     await engine.dispose()
     assert dp["business"] is business
     assert dp["settings"] is settings
+
+
+async def test_demo_mode_adds_owner_button():
+    business = load_business_config(DEFAULT_BUSINESS_CONFIG)
+    message = AsyncMock()
+    await cmd_start(
+        message, business=business, state=AsyncMock(),
+        settings=Settings(_env_file=None, bot_token="123:abc", demo_mode=True),
+    )
+    markup = message.answer.await_args.kwargs["reply_markup"]
+    assert [b.text for row in markup.keyboard for b in row][-1] == texts.BTN_DEMO_OWNER

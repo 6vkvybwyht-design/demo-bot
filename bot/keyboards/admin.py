@@ -10,6 +10,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot import texts
 from bot.db.models import Booking, Master, Service, TimeOff, WorkingHours
 from bot.keyboards.callbacks import AdminCb
+from bot.services.demo import FULL_ACCESS, Viewer
 from bot.services.formatting import fmt_date, fmt_time, period_text, schedule_line
 
 
@@ -51,13 +52,15 @@ def cancel_input_kb() -> InlineKeyboardMarkup:
 # --- Записи -------------------------------------------------------------------
 
 
-def day_kb(day: date, bookings: Sequence[Booking], tz: ZoneInfo) -> InlineKeyboardMarkup:
+def day_kb(
+    day: date, bookings: Sequence[Booking], tz: ZoneInfo, viewer: Viewer = FULL_ACCESS
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for booking in bookings:
         builder.button(
             text=texts.ADMIN_BOOKING_BUTTON.format(
                 time=fmt_time(booking.start_dt, tz),
-                client=booking.client.name,
+                client=viewer.client_name(booking.client),
                 master=booking.master.name,
             ),
             callback_data=_cb("bk", booking.id),

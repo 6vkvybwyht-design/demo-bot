@@ -15,11 +15,19 @@ from bot.db.models import utcnow
 from bot.db.session import create_engine, create_session_factory
 from bot.handlers import admin, client, fallback, my_bookings
 from bot.middlewares.db import DbSessionMiddleware
+from bot.services.demo import ensure_demo_data, reset_demo
 from bot.services.reminders import send_due_reminders
 
 
-def create_scheduler(bot: Bot, session_factory: async_sessionmaker, business: BusinessConfig) -> AsyncIOScheduler:
-    """Щохвилинна перевірка нагадувань; перший запуск — одразу після старту."""
+# Нічне скидання демо (час — за часовим поясом бізнесу)
+DEMO_RESET_HOUR = 4
+
+
+def create_scheduler(
+    bot: Bot, session_factory: async_sessionmaker, business: BusinessConfig, demo_mode: bool = False
+) -> AsyncIOScheduler:
+    """Щохвилинна перевірка нагадувань (перший запуск — одразу після старту)
+    і, в демо-режимі, нічне скидання даних о 04:00."""
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_job(
         send_due_reminders,
@@ -31,6 +39,19 @@ def create_scheduler(bot: Bot, session_factory: async_sessionmaker, business: Bu
         coalesce=True,  # пропущені запуски (бот «спав») зливаються в один
         next_run_time=utcnow(),
     )
+    if demo_mode:
+        scheduler.add_job(
+            reset_demo,
+            "cron",
+            hour=DEMO_RESET_HOUR,
+            minute=0,
+            timezone=business.booking.tz,
+            kwargs={"session_factory": session_factory, "business": business},
+            id="demo_reset",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,  # якщо бот перезапускався близько 04:00 — усе одно скинути
+        )
     return scheduler
 
 
@@ -66,7 +87,9 @@ async def main() -> None:
     engine = create_engine(settings.database_url)
     session_factory = create_session_factory(engine)
     dp = create_dispatcher(settings, business, session_factory)
-    scheduler = create_scheduler(bot, session_factory, business)
+    scheduler = create_scheduler(bot, session_factory, business, settings.demo_mode)
+    if settings.demo_mode:
+        await ensure_demo_data(session_factory, business)
 
     logging.info(
         "Запуск бота «%s» (demo_mode=%s)", business.business.name, settings.demo_mode

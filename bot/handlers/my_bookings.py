@@ -149,6 +149,7 @@ async def do_cancel(
     await notifications.notify_staff(
         bot, session, booking_id=booking.id, template=texts.NOTIFY_CANCELLED_BY_CLIENT,
         admin_ids=settings.admin_ids, business=business,
+        demo_mode=settings.demo_mode, actor_id=callback.from_user.id,
     )
 
 
@@ -282,4 +283,5 @@ async def do_move(
         bot, session, booking_id=booking.id, template=texts.NOTIFY_RESCHEDULED,
         admin_ids=settings.admin_ids, business=business,
         old_start=datetime.fromisoformat(data["old_start"]),
+        demo_mode=settings.demo_mode, actor_id=callback.from_user.id,
     )
