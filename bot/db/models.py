@@ -199,6 +199,8 @@ class Booking(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     reminded_24h: Mapped[bool] = mapped_column(default=False, server_default="0")
     reminded_2h: Mapped[bool] = mapped_column(default=False, server_default="0")
+    # Коли клієнт натиснув «Буду» в нагадуванні (None — не підтверджував)
+    client_confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
     client: Mapped[Client] = relationship()
     master: Mapped[Master] = relationship()

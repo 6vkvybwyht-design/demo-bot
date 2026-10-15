@@ -257,10 +257,22 @@ async def reschedule_booking(
 
         booking.start_dt = new_start
         booking.end_dt = new_start + timedelta(minutes=booking.service.duration_min)
-        # Новий час — нагадування плануються заново
+        # Новий час — нагадування плануються заново, підтвердження клієнта скидається
         _plan_reminders(booking, now, reminders)
+        booking.client_confirmed_at = None
         await session.commit()
     except BaseException:
         await session.rollback()
         raise
+    return booking
+
+
+async def confirm_attendance(
+    session: AsyncSession, *, booking_id: int, telegram_id: int, now: datetime
+) -> Booking:
+    """Клієнт натиснув «Буду» в нагадуванні."""
+    booking = await get_own_booking(session, booking_id, telegram_id, now)
+    if booking.client_confirmed_at is None:
+        booking.client_confirmed_at = now
+        await session.commit()
     return booking

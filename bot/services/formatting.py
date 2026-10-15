@@ -124,7 +124,11 @@ def admin_day_text(day: date, bookings: Sequence[Booking], tz: ZoneInfo) -> str:
             lines.append(texts.ADMIN_DAY_MASTER.format(master=html.quote(current_master)))
         lines.append(
             texts.ADMIN_DAY_LINE.format(
-                icon=texts.STATUS_ICONS[booking.status.value],
+                icon=(
+                    texts.STATUS_ICON_CLIENT_CONFIRMED
+                    if booking.status is BookingStatus.CONFIRMED and booking.client_confirmed_at
+                    else texts.STATUS_ICONS[booking.status.value]
+                ),
                 time=fmt_time(booking.start_dt, tz),
                 service=html.quote(booking.service.name),
                 client=html.quote(booking.client.name),

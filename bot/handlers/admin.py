@@ -105,6 +105,8 @@ async def show_booking(
     text = texts.ADMIN_BOOKING.format(
         details=notifications.staff_details(booking, business), status=status_label(booking.status)
     )
+    if booking.client_confirmed_at is not None:
+        text += f"\n{texts.ADMIN_CLIENT_CONFIRMED}"
     markup = kb.booking_kb(
         booking, business.booking.tz,
         can_mark=admin.can_mark(booking, now), can_cancel=admin.can_cancel(booking, now),
