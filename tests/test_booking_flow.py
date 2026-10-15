@@ -1,45 +1,15 @@
 """Наскрізні тести сценарію запису через Dispatcher (FSM, фільтри, middleware)."""
 
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, timedelta
 
-import pytest
 from aiogram.methods import AnswerCallbackQuery
 from sqlalchemy import select
 
 from bot import texts
-from bot.config import Settings
-from bot.db.models import Booking, BookingStatus, Client, Master, Service, WorkingHours
+from bot.db.models import Booking, BookingStatus, Client, Master, Service
 from bot.db.session import create_session_factory
 from bot.keyboards.callbacks import MyBookingCb
-from bot.main import create_dispatcher
 from tests.fake_telegram import TelegramUser
-
-
-def _every_day():
-    # Працюють щодня, щоб тест не залежав від поточної дати й часу
-    return [WorkingHours(weekday=wd, start_time=time(0), end_time=time(23, 45)) for wd in range(7)]
-
-
-@pytest.fixture
-async def dp(engine, business):
-    factory = create_session_factory(engine)
-    async with factory() as session:
-        haircut = Service(name="Стрижка", duration_min=45, price=500)
-        beard = Service(name="Борода", duration_min=30, price=350)
-        session.add_all([
-            haircut, beard,
-            Master(name="Олександр", services=[haircut, beard], working_hours=_every_day()),
-            Master(name="Дмитро", services=[haircut], working_hours=_every_day()),
-            Master(name="Максим", services=[beard], working_hours=_every_day()),
-        ])
-        await session.commit()
-    settings = Settings(_env_file=None, bot_token="42:TEST")
-    return create_dispatcher(settings, business, factory)
-
-
-@pytest.fixture
-def user(dp):
-    return TelegramUser(dp)
 
 
 async def _bookings(engine) -> list[Booking]:

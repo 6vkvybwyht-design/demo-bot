@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from bot.config import BusinessConfig, Settings, get_settings, load_business_config
 from bot.db.session import create_engine, create_session_factory
-from bot.handlers import client, fallback, my_bookings
+from bot.handlers import admin, client, fallback, my_bookings
 from bot.middlewares.db import DbSessionMiddleware
 
 
@@ -25,6 +25,7 @@ def create_dispatcher(
     dp.callback_query.middleware(CallbackAnswerMiddleware())
     dp.include_router(client.router)
     dp.include_router(my_bookings.router)
+    dp.include_router(admin.router)
     dp.include_router(fallback.router)  # завжди останнім
     return dp
 

@@ -14,3 +14,8 @@ class RescheduleStates(StatesGroup):
     date = State()
     time = State()
     confirm = State()
+
+
+class AdminStates(StatesGroup):
+    input = State()  # очікуємо текст; що саме — у data["kind"]
+    confirm = State()  # чекаємо підтвердження дії з конфліктами

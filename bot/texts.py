@@ -112,3 +112,183 @@ MOVE_CONFIRM = "Перенести запис?\n\nБуло: {old}\nСтане: <
 MOVE_WHEN = "{date}, {time}"
 BTN_MOVE_CONFIRM = "✅ Перенести"
 BOOKING_MOVED = "✅ Запис перенесено!\n\n{summary}\n\n📍 {address}\n\n{after}"
+
+# Сповіщення власнику й майстру
+NOTIFY_NEW = "🆕 <b>Новий запис</b>\n\n{details}"
+NOTIFY_CANCELLED_BY_CLIENT = "❌ <b>Клієнт скасував запис</b>\n\n{details}"
+NOTIFY_CANCELLED_BY_ADMIN = "❌ <b>Запис скасовано адміністратором</b>\n\n{details}"
+NOTIFY_RESCHEDULED = "🔁 <b>Запис перенесено</b>\nБуло: {old}\n\n{details}"
+STAFF_DETAILS = "{summary}\n\n🙋 Клієнт: {client}\n📞 {phone}"
+NO_PHONE = "телефон не вказано"
+
+# Сповіщення клієнту
+CLIENT_CANCELLED_BY_ADMIN = (
+    "😔 На жаль, ваш запис скасовано.\n\n{summary}\n\n"
+    "Вибачте за незручності. Щоб обрати інший час, натисніть «📅 Записатися» "
+    "або зателефонуйте нам: {phone}"
+)
+
+# ============================== Адмінка ======================================
+
+ADMIN_ONLY = "Ця команда доступна лише власнику."
+ADMIN_NO_ACCESS = "Немає доступу."
+ADMIN_MENU = "⚙️ <b>Адмінка</b>\n\nОберіть розділ:"
+BTN_ADMIN_TODAY = "📅 Сьогодні"
+BTN_ADMIN_WEEK = "🗓 Тиждень"
+BTN_ADMIN_SERVICES = "💈 Послуги"
+BTN_ADMIN_MASTERS = "👤 Майстри"
+BTN_ADMIN_SCHEDULE = "🕐 Графік"
+BTN_ADMIN_TIME_OFF = "⛔ Блокування часу"
+BTN_ADMIN_MENU = "⬅️ До меню адмінки"
+BTN_CANCEL_INPUT = "✖️ Скасувати"
+BTN_PREV_DAY = "◀️"
+BTN_NEXT_DAY = "▶️"
+WEEKDAYS_FULL = ("понеділок", "вівторок", "середа", "четвер", "п'ятниця", "субота", "неділя")
+INPUT_CANCELLED = "Скасовано."
+INVALID_INPUT = "❗️ Не вдалося розпізнати. {hint}"
+
+# Записи
+ADMIN_DAY = "📅 <b>{date}</b> — записів: {count}\n{lines}"
+ADMIN_DAY_EMPTY = "📅 <b>{date}</b>\n\nЗаписів немає."
+ADMIN_DAY_MASTER = "\n<b>{master}</b>"
+ADMIN_DAY_LINE = "{icon} {time} · {service} · {client}"
+ADMIN_WEEK = "🗓 <b>Найближчі 7 днів</b>\n\nОберіть день:"
+ADMIN_WEEK_DAY = "{date} · {count}"
+ADMIN_BOOKING_BUTTON = "{time} {client} ({master})"
+STATUS_ICONS = {"confirmed": "🕐", "completed": "✅", "no_show": "🚫"}
+STATUS_LABELS = {
+    "confirmed": "підтверджено",
+    "completed": "відбувся",
+    "no_show": "не прийшов",
+    "cancelled_by_client": "скасовано клієнтом",
+    "cancelled_by_admin": "скасовано адміністратором",
+}
+ADMIN_BOOKING = "{details}\n\nСтатус: <b>{status}</b>"
+BTN_MARK_COMPLETED = "✅ Відбувся"
+BTN_MARK_NO_SHOW = "🚫 Не прийшов"
+BTN_ADMIN_CANCEL = "❌ Скасувати запис"
+BTN_BACK_TO_DAY = "⬅️ До списку"
+ADMIN_CANCEL_CONFIRM = "Скасувати цей запис? Клієнт отримає сповіщення.\n\n{details}"
+BTN_ADMIN_CANCEL_YES = "Так, скасувати"
+BTN_ADMIN_CANCEL_NO = "Ні"
+ADMIN_CANCELLED = "❌ Запис скасовано. {client_note}\n\n{details}"
+CLIENT_NOTIFIED = "Клієнта сповіщено."
+CLIENT_NOT_NOTIFIED = (
+    "⚠️ Не вдалося сповістити клієнта (можливо, він заблокував бота) — "
+    "зателефонуйте йому: {phone}."
+)
+ADMIN_BOOKING_CHANGED = "Запис уже змінено або час минув — оновлено картку."
+
+# Попередження про майбутні записи
+FUTURE_BOOKING_LINE = "• {when} · {service} · {master} · {client}, {phone}"
+FUTURE_BOOKINGS_MORE = "…і ще {count}"
+WARN_HIDE_SERVICE = (
+    "⚠️ На послугу «{name}» є майбутні записи: {count}.\n"
+    "Після приховування нових записів на неї не буде, а ці записи залишаться. "
+    "Зв'яжіться з клієнтами, якщо потрібно:\n\n{lines}"
+)
+WARN_HIDE_MASTER = (
+    "⚠️ У майстра «{name}» є майбутні записи: {count}.\n"
+    "Після приховування нових записів до нього не буде, а ці записи залишаться. "
+    "Зв'яжіться з клієнтами, якщо потрібно:\n\n{lines}"
+)
+WARN_UNLINK_SERVICE = (
+    "⚠️ У майстра «{master}» є майбутні записи на «{service}»: {count}.\n"
+    "Після відв'язування нових записів не буде, а ці залишаться. "
+    "Зв'яжіться з клієнтами, якщо потрібно:\n\n{lines}"
+)
+WARN_SCHEDULE = (
+    "⚠️ Новий графік на {weekday} не охоплює майбутні записи: {count}.\n"
+    "Записи залишаться — зв'яжіться з клієнтами, якщо потрібно:\n\n{lines}"
+)
+WARN_TIME_OFF = (
+    "⚠️ Блокування перетинається з майбутніми записами: {count}.\n"
+    "Записи залишаться — зв'яжіться з клієнтами, якщо потрібно:\n\n{lines}"
+)
+BTN_FORCE_HIDE = "Все одно приховати"
+BTN_FORCE_UNLINK = "Все одно відв'язати"
+BTN_FORCE_SAVE = "Все одно зберегти"
+BTN_ABORT = "Скасувати"
+
+# Послуги
+ADMIN_SERVICES = "💈 <b>Послуги</b>\n\n🙈 — приховані від клієнтів."
+ADMIN_SERVICE_BUTTON = "{hidden}{name} · {duration} хв · {price} грн"
+HIDDEN_MARK = "🙈 "
+BTN_ADD_SERVICE = "➕ Додати послугу"
+ADMIN_SERVICE = "💈 <b>{name}</b>\n⏱ {duration} хв · 💵 {price} грн\nСтатус: {status}"
+STATUS_VISIBLE = "показується клієнтам"
+STATUS_HIDDEN = "🙈 приховано"
+BTN_EDIT_NAME = "✏️ Назва"
+BTN_EDIT_DURATION = "⏱ Тривалість"
+BTN_EDIT_PRICE = "💵 Ціна"
+BTN_HIDE = "🙈 Приховати"
+BTN_SHOW = "👁 Показати"
+BTN_BACK_TO_SERVICES = "⬅️ До послуг"
+ASK_SERVICE_NAME = "Введіть назву послуги:"
+ASK_SERVICE_DURATION = "Тривалість у хвилинах (від 5 до 600):"
+ASK_SERVICE_PRICE = "Ціна в гривнях (ціле число):"
+HINT_NAME = "Введіть назву до 100 символів."
+HINT_DURATION = "Введіть ціле число хвилин від 5 до 600."
+HINT_PRICE = "Введіть ціну цілим числом гривень, наприклад 500."
+
+# Майстри
+ADMIN_MASTERS = "👤 <b>Майстри</b>\n\n🙈 — приховані від клієнтів."
+BTN_ADD_MASTER = "➕ Додати майстра"
+ADMIN_MASTER = (
+    "👤 <b>{name}</b>\nСтатус: {status}\n🔔 Telegram ID: {telegram_id}\n"
+    "💈 Послуги: {services}\n\n🕐 Графік:\n{schedule}"
+)
+NOT_SET = "не вказано"
+NO_SERVICES_LINKED = "не прив'язано"
+BTN_EDIT_MASTER_NAME = "✏️ Ім'я"
+BTN_EDIT_TELEGRAM_ID = "🔔 Telegram ID"
+BTN_MASTER_SERVICES = "💈 Послуги майстра"
+BTN_BACK_TO_MASTERS = "⬅️ До майстрів"
+BTN_BACK_TO_MASTER = "⬅️ До майстра"
+ASK_MASTER_NAME = "Введіть ім'я майстра:"
+ASK_TELEGRAM_ID = (
+    "Введіть числовий Telegram ID майстра, щоб він отримував сповіщення "
+    "(дізнатися ID можна, наприклад, через @userinfobot), або «-», щоб прибрати:"
+)
+HINT_TELEGRAM_ID = "Потрібне число, наприклад 123456789, або «-»."
+ADMIN_MASTER_SERVICES = "💈 Послуги майстра «{name}»\n\nНатисніть, щоб прив'язати ✅ або відв'язати ▫️:"
+LINKED_MARK = "✅ "
+UNLINKED_MARK = "▫️ "
+
+# Графік
+ADMIN_CHOOSE_MASTER = "Оберіть майстра:"
+ADMIN_SCHEDULE = "🕐 <b>Графік: {name}</b>\n\nОберіть день, щоб змінити:"
+SCHEDULE_DAY = "{weekday}: {hours}"
+SCHEDULE_HOURS = "{start}–{end}"
+SCHEDULE_BREAK = " (перерва {start}–{end})"
+SCHEDULE_DAY_OFF = "вихідний"
+ASK_HOURS = (
+    "Робочі години на {weekday}:\n"
+    "• «10:00-20:00»\n• з перервою — «10:00-20:00 14:00-15:00»\n• «вихідний»"
+)
+HINT_HOURS = "Приклади: «10:00-20:00», «10:00-20:00 14:00-15:00», «вихідний»."
+SCHEDULE_SAVED = "✅ Графік збережено."
+
+# Блокування часу
+ASK_PERIOD = (
+    "Період блокування для «{name}»:\n"
+    "• «20.10 10:00-13:00» — частина дня\n• «20.10» — увесь день\n• «20.10-25.10» — кілька днів"
+)
+HINT_PERIOD = "Приклади: «20.10 10:00-13:00», «20.10», «20.10-25.10» (не довше 2 місяців)."
+ASK_REASON = "Причина (відпустка, лікарняний тощо) або натисніть «Без причини»:"
+BTN_NO_REASON = "Без причини"
+TIME_OFF_SAVED = "✅ Час заблоковано: {period}."
+ADMIN_TIME_OFFS = "⛔ <b>Блокування часу: {name}</b>\n\n{lines}"
+TIME_OFFS_EMPTY = "Майбутніх блокувань немає."
+TIME_OFF_LINE = "• {period}{reason}"
+TIME_OFF_REASON = " — {reason}"
+BTN_ADD_TIME_OFF = "➕ Додати блокування"
+BTN_DELETE_TIME_OFF = "🗑 {period}"
+TIME_OFF_DELETE_CONFIRM = (
+    "Видалити блокування?\n\n{line}\n\nЦей час знову стане доступним для запису."
+)
+BTN_DELETE_YES = "Так, видалити"
+BTN_DELETE_NO = "Ні"
+TIME_OFF_DELETED = "🗑 Блокування видалено."
+TIME_OFF_GONE = "Це блокування вже видалено."
+PERIOD_FORMAT = "{start} — {end}"
