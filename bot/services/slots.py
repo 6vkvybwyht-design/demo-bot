@@ -165,9 +165,10 @@ async def _master_does_service(session: AsyncSession, master_id: int, service_id
     return found is not None
 
 
-async def _masters_for_service(session: AsyncSession, service_id: int) -> list[int]:
+async def masters_for_service(session: AsyncSession, service_id: int) -> list[Master]:
+    """Активні майстри, які виконують активну послугу."""
     result = await session.scalars(
-        select(Master.id)
+        select(Master)
         .join(MasterService, MasterService.master_id == Master.id)
         .join(Service, Service.id == MasterService.service_id)
         .where(MasterService.service_id == service_id, Master.is_active, Service.is_active)
@@ -210,7 +211,7 @@ async def get_free_slots_any_master(
 ) -> dict[datetime, list[int]]:
     """«Будь-який майстер»: об'єднання слотів. Ключ — початок слоту, значення — id вільних майстрів."""
     slots: dict[datetime, list[int]] = {}
-    for master_id in await _masters_for_service(session, service.id):
+    for master_id in [m.id for m in await masters_for_service(session, service.id)]:
         master_day = await _load_master_day(session, master_id, day, rules.tz)
         for start in compute_free_slots(
             day=day,

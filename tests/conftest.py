@@ -23,3 +23,14 @@ async def engine(tmp_path):
 async def session(engine):
     async with create_session_factory(engine)() as session:
         yield session
+
+
+@pytest.fixture(autouse=True)
+def _detach_routers():
+    # Модульний router в aiogram можна приєднати лише до одного Dispatcher,
+    # а тести створюють новий диспетчер на кожен тест
+    yield
+    from bot.handlers import client, fallback
+
+    for module in (client, fallback):
+        module.router._parent_router = None
