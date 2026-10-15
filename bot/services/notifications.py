@@ -1,0 +1,101 @@
+"""Сповіщення власнику, майстру й клієнту.
+
+Помилка відправки (клієнт заблокував бота, чат не знайдено, мережа) не повинна
+ламати основну дію: її логуємо й продовжуємо.
+"""
+
+import logging
+from collections.abc import Iterable
+from datetime import datetime
+
+from aiogram import Bot, html
+from aiogram.exceptions import TelegramAPIError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from bot import texts
+from bot.config import BusinessConfig
+from bot.db.models import Booking
+from bot.services.formatting import booking_summary, fmt_when
+
+logger = logging.getLogger(__name__)
+
+
+async def safe_send(bot: Bot, chat_id: int, text: str) -> bool:
+    """Надсилає повідомлення. Повертає False, якщо не вдалося (і логує причину)."""
+    try:
+        await bot.send_message(chat_id, text)
+    except TelegramAPIError as exc:
+        logger.warning("Не вдалося надіслати сповіщення в чат %s: %s", chat_id, exc)
+        return False
+    return True
+
+
+async def load_booking(session: AsyncSession, booking_id: int) -> Booking:
+    """Запис з клієнтом, майстром і послугою — для тексту сповіщень."""
+    return await session.scalar(
+        select(Booking)
+        .where(Booking.id == booking_id)
+        .options(
+            selectinload(Booking.client),
+            selectinload(Booking.master),
+            selectinload(Booking.service),
+        )
+        .execution_options(populate_existing=True)
+    )
+
+
+def staff_recipients(booking: Booking, admin_ids: Iterable[int], exclude: int | None = None) -> list[int]:
+    """Усі власники й майстер запису (якщо вказаний його Telegram ID), без дублів."""
+    recipients = list(dict.fromkeys([*admin_ids, booking.master.telegram_id]))
+    return [chat_id for chat_id in recipients if chat_id is not None and chat_id != exclude]
+
+
+def staff_details(booking: Booking, business: BusinessConfig) -> str:
+    summary = booking_summary(
+        service=booking.service,
+        master_name=booking.master.name,
+        start=booking.start_dt,
+        tz=business.booking.tz,
+    )
+    return texts.STAFF_DETAILS.format(
+        summary=summary,
+        client=html.quote(booking.client.name),
+        phone=html.quote(booking.client.phone or texts.NO_PHONE),
+    )
+
+
+async def notify_staff(
+    bot: Bot,
+    session: AsyncSession,
+    *,
+    booking_id: int,
+    template: str,
+    admin_ids: Iterable[int],
+    business: BusinessConfig,
+    old_start: datetime | None = None,
+    exclude: int | None = None,
+) -> None:
+    """Сповіщення власникам і майстру. `exclude` — хто сам виконав дію."""
+    booking = await load_booking(session, booking_id)
+    extra = {"old": fmt_when(old_start, business.booking.tz)} if old_start else {}
+    text = template.format(details=staff_details(booking, business), **extra)
+    for chat_id in staff_recipients(booking, admin_ids, exclude):
+        await safe_send(bot, chat_id, text)
+
+
+async def notify_client_cancelled_by_admin(
+    bot: Bot, session: AsyncSession, *, booking_id: int, business: BusinessConfig
+) -> bool:
+    booking = await load_booking(session, booking_id)
+    summary = booking_summary(
+        service=booking.service,
+        master_name=booking.master.name,
+        start=booking.start_dt,
+        tz=business.booking.tz,
+    )
+    text = texts.CLIENT_CANCELLED_BY_ADMIN.format(
+        summary=summary, phone=html.quote(business.business.phone)
+    )
+    return await safe_send(bot, booking.client.telegram_id, text)

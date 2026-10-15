@@ -2,18 +2,19 @@
 
 from datetime import UTC, datetime
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import texts
-from bot.config import BusinessConfig
+from bot.config import BusinessConfig, Settings
 from bot.db.models import Booking, utcnow
 from bot.handlers.client import show_dates, show_times
 from bot.keyboards import booking as kb
 from bot.keyboards.callbacks import MyBookingCb, NavCb, TimeCb
 from bot.services import booking as booking_service
+from bot.services import notifications
 from bot.services.booking import (
     BookingNotFoundError,
     ChangeDeadlinePassedError,
@@ -106,7 +107,7 @@ async def ask_cancel(
 @router.callback_query(MyBookingCb.filter(F.action == "cancel_yes"))
 async def do_cancel(
     callback: CallbackQuery, callback_data: MyBookingCb, session: AsyncSession,
-    business: BusinessConfig,
+    business: BusinessConfig, bot: Bot, settings: Settings,
 ) -> None:
     try:
         booking = await booking_service.cancel_booking_by_client(
@@ -121,6 +122,10 @@ async def do_cancel(
         return
     await callback.message.edit_text(
         texts.BOOKING_CANCELLED.format(summary=_summary(booking, business))
+    )
+    await notifications.notify_staff(
+        bot, session, booking_id=booking.id, template=texts.NOTIFY_CANCELLED_BY_CLIENT,
+        admin_ids=settings.admin_ids, business=business,
     )
 
 
@@ -154,7 +159,12 @@ async def start_move(
     # Ті самі послуга й майстер; кроки дати й часу — спільні зі сценарієм запису
     await state.clear()
     await state.set_data(
-        {"booking_id": booking.id, "service_id": booking.service_id, "master_id": booking.master_id}
+        {
+            "booking_id": booking.id,
+            "service_id": booking.service_id,
+            "master_id": booking.master_id,
+            "old_start": booking.start_dt.isoformat(),
+        }
     )
     await show_dates(callback, state, session, business)
 
@@ -213,7 +223,8 @@ async def move_back_to_times(
 
 @router.callback_query(RescheduleStates.confirm, NavCb.filter(F.action == "confirm"))
 async def do_move(
-    callback: CallbackQuery, state: FSMContext, session: AsyncSession, business: BusinessConfig
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession, business: BusinessConfig,
+    bot: Bot, settings: Settings,
 ) -> None:
     data = await state.get_data()
     now = utcnow()
@@ -243,4 +254,9 @@ async def do_move(
             address=business.business.address,
             reminders=reminders,
         )
+    )
+    await notifications.notify_staff(
+        bot, session, booking_id=booking.id, template=texts.NOTIFY_RESCHEDULED,
+        admin_ids=settings.admin_ids, business=business,
+        old_start=datetime.fromisoformat(data["old_start"]),
     )

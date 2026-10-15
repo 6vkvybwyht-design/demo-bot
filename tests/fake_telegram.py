@@ -7,6 +7,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.base import BaseSession
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramForbiddenError
 from aiogram.methods import EditMessageText, GetMe, SendMessage, TelegramMethod
 from aiogram.types import (
     CallbackQuery,
@@ -26,12 +27,15 @@ class FakeSession(BaseSession):
     def __init__(self) -> None:
         super().__init__()
         self.requests: list[TelegramMethod] = []
+        self.blocked_chats: set[int] = set()  # чати, що заблокували бота
         self._ids = count(1000)
 
     async def make_request(self, bot, method, timeout=None):
         self.requests.append(method)
         if isinstance(method, GetMe):
             return BOT_USER
+        if isinstance(method, SendMessage) and method.chat_id in self.blocked_chats:
+            raise TelegramForbiddenError(method=method, message="Forbidden: bot was blocked by the user")
         if isinstance(method, (SendMessage, EditMessageText)):
             return Message(
                 message_id=next(self._ids),
@@ -101,19 +105,27 @@ class TelegramUser:
 
     # --- Розбір відповідей бота ---
 
+    def _own(self) -> list[TelegramMethod]:
+        """Запити в чат самого користувача (без сповіщень іншим людям)."""
+        return [r for r in self.session.requests if getattr(r, "chat_id", self.chat.id) == self.chat.id]
+
+    def sent_to(self, chat_id: int) -> list[str]:
+        """Тексти, які бот надіслав у чат `chat_id` під час дій цього користувача."""
+        return [r.text for r in self.session.requests if isinstance(r, SendMessage) and r.chat_id == chat_id]
+
     def last_text(self) -> str:
-        texts = [r.text for r in self.session.requests if isinstance(r, (SendMessage, EditMessageText))]
+        texts = [r.text for r in self._own() if isinstance(r, (SendMessage, EditMessageText))]
         return texts[-1]
 
     def last_inline(self) -> InlineKeyboardMarkup:
-        for request in reversed(self.session.requests):
+        for request in reversed(self._own()):
             markup = getattr(request, "reply_markup", None)
             if isinstance(markup, InlineKeyboardMarkup):
                 return markup
         raise AssertionError("бот не надсилав inline-кнопок")
 
     def last_reply_keyboard(self) -> ReplyKeyboardMarkup:
-        for request in reversed(self.session.requests):
+        for request in reversed(self._own()):
             markup = getattr(request, "reply_markup", None)
             if isinstance(markup, ReplyKeyboardMarkup):
                 return markup

@@ -30,3 +30,9 @@ class NoopCb(CallbackData, prefix="noop"):
 class MyBookingCb(CallbackData, prefix="my"):
     action: str  # cancel / cancel_yes / cancel_no / move
     booking_id: int
+
+
+class AdminCb(CallbackData, prefix="adm"):
+    action: str
+    id: int = 0
+    arg: str = ""

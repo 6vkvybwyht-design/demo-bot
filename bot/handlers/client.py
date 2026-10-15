@@ -2,21 +2,21 @@
 
 from datetime import UTC, date, datetime
 
-from aiogram import F, Router, html
+from aiogram import Bot, F, Router, html
 from aiogram.filters import CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import texts
-from bot.config import BusinessConfig
+from bot.config import BusinessConfig, Settings
 from bot.db import repo
 from bot.db.models import Master, Service, utcnow
 from bot.keyboards import booking as kb
 from bot.keyboards.callbacks import ANY_MASTER, DateCb, MasterCb, NavCb, NoopCb, ServiceCb, TimeCb
 from bot.keyboards.main_menu import main_menu_kb
 from bot.services import booking as booking_service
-from bot.services import slots
+from bot.services import notifications, slots
 from bot.services.booking import SlotUnavailableError
 from bot.services.formatting import (
     booking_done_text,
@@ -309,7 +309,8 @@ async def phone_expected(message: Message) -> None:
 
 @router.callback_query(BookingStates.confirm, NavCb.filter(F.action == "confirm"))
 async def confirm_booking(
-    callback: CallbackQuery, state: FSMContext, session: AsyncSession, business: BusinessConfig
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession, business: BusinessConfig,
+    bot: Bot, settings: Settings,
 ) -> None:
     service, master_id = await _load_choice(session, state)
     start = datetime.fromisoformat((await state.get_data())["start"])
@@ -335,6 +336,10 @@ async def confirm_booking(
     )
     await callback.message.edit_text(
         booking_done_text(summary=summary, address=business.business.address, reminders=reminders)
+    )
+    await notifications.notify_staff(
+        bot, session, booking_id=booking.id, template=texts.NOTIFY_NEW,
+        admin_ids=settings.admin_ids, business=business,
     )
 
 
