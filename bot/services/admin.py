@@ -270,6 +270,30 @@ async def create_time_off(
     return time_off
 
 
+async def upcoming_time_offs(session: AsyncSession, master_id: int, now: datetime) -> list[TimeOff]:
+    """Блокування майстра, які ще не закінчилися."""
+    result = await session.scalars(
+        select(TimeOff)
+        .where(TimeOff.master_id == master_id, TimeOff.end_dt > now)
+        .order_by(TimeOff.start_dt)
+    )
+    return list(result.all())
+
+
+async def get_time_off(session: AsyncSession, time_off_id: int) -> TimeOff | None:
+    return await session.get(TimeOff, time_off_id, populate_existing=True)
+
+
+async def delete_time_off(session: AsyncSession, time_off_id: int) -> bool:
+    """Видаляє блокування. False, якщо його вже немає."""
+    time_off = await session.get(TimeOff, time_off_id)
+    if time_off is None:
+        return False
+    await session.delete(time_off)
+    await session.commit()
+    return True
+
+
 # --- Розбір введеного адміном тексту ------------------------------------------
 
 

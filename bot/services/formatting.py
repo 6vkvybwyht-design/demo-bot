@@ -8,7 +8,7 @@ from aiogram import html
 
 from bot import texts
 from bot.config import BusinessInfo
-from bot.db.models import Booking, BookingStatus, Master, Service, WorkingHours
+from bot.db.models import Booking, BookingStatus, Master, Service, TimeOff, WorkingHours
 from bot.services.booking import PlannedReminders
 
 
@@ -191,3 +191,15 @@ def admin_master_text(master: Master) -> str:
 
 def period_text(start: datetime, end: datetime, tz: ZoneInfo) -> str:
     return texts.PERIOD_FORMAT.format(start=fmt_when(start, tz), end=fmt_when(end, tz))
+
+
+def time_off_line(time_off: TimeOff, tz: ZoneInfo) -> str:
+    reason = texts.TIME_OFF_REASON.format(reason=html.quote(time_off.reason)) if time_off.reason else ""
+    return texts.TIME_OFF_LINE.format(
+        period=period_text(time_off.start_dt, time_off.end_dt, tz), reason=reason
+    )
+
+
+def time_offs_text(master_name: str, time_offs: Sequence[TimeOff], tz: ZoneInfo) -> str:
+    lines = "\n".join(time_off_line(t, tz) for t in time_offs) or texts.TIME_OFFS_EMPTY
+    return texts.ADMIN_TIME_OFFS.format(name=html.quote(master_name), lines=lines)

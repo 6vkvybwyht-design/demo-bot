@@ -25,6 +25,8 @@ from bot.services.formatting import (
     future_bookings_lines,
     period_text,
     status_label,
+    time_off_line,
+    time_offs_text,
 )
 from bot.states import AdminStates
 
@@ -391,12 +393,64 @@ async def time_off_choose_master(callback: CallbackQuery, session: AsyncSession)
     )
 
 
+async def show_time_offs(
+    event: Event, master_id: int, session: AsyncSession, business: BusinessConfig,
+    notice: str | None = None,
+) -> None:
+    tz = business.booking.tz
+    mst = await admin.get_master(session, master_id)
+    time_offs = await admin.upcoming_time_offs(session, master_id, utcnow())
+    text = time_offs_text(mst.name, time_offs, tz)
+    if notice:
+        text = f"{notice}\n\n{text}"
+    await _render(event, text, kb.time_offs_kb(master_id, time_offs, tz))
+
+
 @router.callback_query(AdminCb.filter(F.action == "off_m"))
+async def time_offs(
+    callback: CallbackQuery, callback_data: AdminCb, state: FSMContext,
+    session: AsyncSession, business: BusinessConfig,
+) -> None:
+    await state.clear()
+    await show_time_offs(callback, callback_data.id, session, business)
+
+
+@router.callback_query(AdminCb.filter(F.action == "off_add"))
 async def ask_period(
     callback: CallbackQuery, callback_data: AdminCb, state: FSMContext, session: AsyncSession
 ) -> None:
+    await state.clear()
     mst = await admin.get_master(session, callback_data.id)
     await _ask(callback, state, texts.ASK_PERIOD.format(name=mst.name), kind="period", id=mst.id)
+
+
+@router.callback_query(AdminCb.filter(F.action == "off_del"))
+async def ask_delete_time_off(
+    callback: CallbackQuery, callback_data: AdminCb, callback_answer: CallbackAnswer,
+    session: AsyncSession, business: BusinessConfig,
+) -> None:
+    time_off = await admin.get_time_off(session, callback_data.id)
+    if time_off is None:
+        callback_answer.text = texts.TIME_OFF_GONE
+        await callback.message.edit_text(texts.TIME_OFF_GONE, reply_markup=kb.back_to_menu_kb())
+        return
+    await callback.message.edit_text(
+        texts.TIME_OFF_DELETE_CONFIRM.format(line=time_off_line(time_off, business.booking.tz)),
+        reply_markup=kb.time_off_delete_kb(time_off.id, time_off.master_id),
+    )
+
+
+@router.callback_query(AdminCb.filter(F.action == "off_del_yes"))
+async def delete_time_off(
+    callback: CallbackQuery, callback_data: AdminCb, session: AsyncSession, business: BusinessConfig
+) -> None:
+    time_off = await admin.get_time_off(session, callback_data.id)
+    if time_off is None:
+        await callback.message.edit_text(texts.TIME_OFF_GONE, reply_markup=kb.back_to_menu_kb())
+        return
+    master_id = time_off.master_id
+    await admin.delete_time_off(session, time_off.id)
+    await show_time_offs(callback, master_id, session, business, notice=texts.TIME_OFF_DELETED)
 
 
 async def _save_time_off(
@@ -415,16 +469,14 @@ async def _save_time_off(
             await _render(
                 event,
                 texts.WARN_TIME_OFF.format(count=len(conflicts), lines=future_bookings_lines(conflicts, tz)),
-                kb.force_kb("force", "mst", master_id),
+                kb.force_kb("force", "off_m", master_id),
             )
             return
     await admin.create_time_off(session, master_id, start, end, reason)
     await state.clear()
-    mst = await admin.get_master(session, master_id)
-    await _render(
-        event,
-        texts.TIME_OFF_SAVED.format(master=mst.name, period=period_text(start, end, tz)),
-        kb.back_to_menu_kb(),
+    await show_time_offs(
+        event, master_id, session, business,
+        notice=texts.TIME_OFF_SAVED.format(period=period_text(start, end, tz)),
     )
 
 

@@ -44,6 +44,15 @@ async def _add_booking(engine, start: datetime, master="Дмитро", service="
         return booking.id
 
 
+async def _add_time_off(engine, master_id: int, start: datetime, end: datetime,
+                        reason: str | None = None) -> int:
+    async with create_session_factory(engine)() as session:
+        time_off = TimeOff(master_id=master_id, start_dt=start, end_dt=end, reason=reason)
+        session.add(time_off)
+        await session.commit()
+        return time_off.id
+
+
 async def _get(engine, model, id_):
     async with create_session_factory(engine)() as session:
         return await session.get(model, id_)
@@ -80,8 +89,11 @@ async def test_non_admin_forged_buttons_do_nothing(dp, user, engine):
     past_id = await _add_booking(engine, _in(-3))
     service_id = await _id_of(engine, Service, "Стрижка")
     master_id = await _id_of(engine, Master, "Дмитро")
+    time_off_id = await _add_time_off(engine, master_id, _in(100), _in(102))
     ids = {"bk_done": past_id, "bk_noshow": past_id, "mst_svc": master_id,
-           "mst_svc_force": master_id, "svc_hide_force": service_id, "svc_hide": service_id}
+           "mst_svc_force": master_id, "svc_hide_force": service_id, "svc_hide": service_id,
+           "off_del": time_off_id, "off_del_yes": time_off_id, "off_m": master_id,
+           "off_add": master_id}
     args = {"day": "2026-10-19", "sched_day": "0", "svc_edit": "name", "mst_edit": "name",
             "mst_svc": str(service_id), "mst_svc_force": str(service_id)}
 
@@ -105,6 +117,7 @@ async def test_non_admin_forged_buttons_do_nothing(dp, user, engine):
     assert (await _get(engine, Booking, past_id)).status is BookingStatus.CONFIRMED
     assert (await _get(engine, Service, service_id)).is_active
     assert (await _get(engine, Master, master_id)).is_active
+    assert await _get(engine, TimeOff, time_off_id) is not None
     async with create_session_factory(engine)() as session:
         assert await session.scalar(select(func.count()).select_from(Service)) == 2
         master = await session.scalar(select(Master).where(Master.id == master_id))
@@ -279,6 +292,7 @@ async def test_time_off_with_conflicts(owner, engine, business):
     master_id = await _id_of(engine, Master, "Дмитро")
 
     await owner.click(_cb("off_m", master_id))
+    await owner.click(owner.button(texts.BTN_ADD_TIME_OFF))
     await owner.send("завтра")
     assert owner.last_text().startswith("❗️ Не вдалося розпізнати")
     await owner.send(f"{local:%d.%m}")  # увесь день
@@ -287,7 +301,8 @@ async def test_time_off_with_conflicts(owner, engine, business):
     assert owner.last_text().startswith("⚠️ Блокування перетинається з майбутніми записами: 1")
 
     await owner.click(owner.button(texts.BTN_FORCE_SAVE))
-    assert owner.last_text().startswith("⛔ Час заблоковано: Дмитро")
+    assert owner.last_text().startswith("✅ Час заблоковано:")
+    assert "Лікарняний" in owner.last_text()  # новий запис у списку блокувань
     async with create_session_factory(engine)() as session:
         [time_off] = (await session.scalars(select(TimeOff))).all()
     assert time_off.reason == "Лікарняний" and time_off.start_dt <= start < time_off.end_dt
@@ -298,9 +313,11 @@ async def test_time_off_without_conflicts_and_reason(owner, engine, business):
     master_id = await _id_of(engine, Master, "Олександр")
     day = _in(72).astimezone(business.booking.tz)
     await owner.click(_cb("off_m", master_id))
+    await owner.click(owner.button(texts.BTN_ADD_TIME_OFF))
     await owner.send(f"{day:%d.%m} 10:00-13:00")
     await owner.click(owner.button(texts.BTN_NO_REASON))
-    assert owner.last_text().startswith("⛔ Час заблоковано: Олександр")
+    assert owner.last_text().startswith("✅ Час заблоковано:")
+    assert "Блокування часу: Олександр" in owner.last_text()
     async with create_session_factory(engine)() as session:
         [time_off] = (await session.scalars(select(TimeOff))).all()
     assert time_off.reason is None and time_off.end_dt - time_off.start_dt == timedelta(hours=3)
@@ -396,3 +413,46 @@ async def test_blocked_staff_does_not_break_booking(user, engine, caplog):
         assert await session.scalar(select(func.count()).select_from(Booking)) == 1
     logged = " ".join(r.getMessage() for r in caplog.records)
     assert str(ADMIN_ID) in logged and str(MASTER_TG_ID) in logged
+
+
+async def test_time_off_list_and_delete(owner, engine, business):
+    master_id = await _id_of(engine, Master, "Дмитро")
+    other_id = await _id_of(engine, Master, "Максим")
+    past = await _add_time_off(engine, master_id, _in(-30), _in(-26), "Минуле")
+    current = await _add_time_off(engine, master_id, _in(-1), _in(5), "Триває")
+    future = await _add_time_off(engine, master_id, _in(50), _in(53), "Відпустка")
+    await _add_time_off(engine, other_id, _in(60), _in(62), "Чуже")
+
+    await owner.click(_cb("mst", master_id))
+    await owner.click(owner.button(texts.BTN_ADMIN_TIME_OFF))
+    text = owner.last_text()
+    assert text.startswith("⛔ <b>Блокування часу: Дмитро</b>")
+    assert "Триває" in text and "Відпустка" in text
+    assert "Минуле" not in text and "Чуже" not in text  # лише майбутні й поточні цього майстра
+    delete_buttons = [data for label, data in owner.buttons() if label.startswith("🗑")]
+    assert delete_buttons == [_cb("off_del", current), _cb("off_del", future)]
+
+    # Видалення з підтвердженням; «Ні» — нічого не видаляє
+    await owner.click(_cb("off_del", future))
+    assert owner.last_text().startswith("Видалити блокування?") and "Відпустка" in owner.last_text()
+    await owner.click(owner.button(texts.BTN_DELETE_NO))
+    assert await _get(engine, TimeOff, future) is not None
+    assert "Відпустка" in owner.last_text()
+
+    await owner.click(_cb("off_del", future))
+    await owner.click(owner.button(texts.BTN_DELETE_YES))
+    assert owner.last_text().startswith(texts.TIME_OFF_DELETED)
+    assert "Відпустка" not in owner.last_text() and "Триває" in owner.last_text()
+    assert await _get(engine, TimeOff, future) is None
+    assert await _get(engine, TimeOff, past) is not None
+
+    # Стара кнопка підтвердження після видалення
+    await owner.click(_cb("off_del_yes", future))
+    assert owner.last_text() == texts.TIME_OFF_GONE
+
+    # Видаляємо й поточне блокування — список порожній
+    await owner.click(_cb("off_m", master_id))
+    await owner.click(_cb("off_del", current))
+    await owner.click(owner.button(texts.BTN_DELETE_YES))
+    await owner.click(_cb("off_m", master_id))
+    assert texts.TIME_OFFS_EMPTY in owner.last_text()

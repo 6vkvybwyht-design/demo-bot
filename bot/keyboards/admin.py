@@ -8,9 +8,9 @@ from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot import texts
-from bot.db.models import Booking, Master, Service, WorkingHours
+from bot.db.models import Booking, Master, Service, TimeOff, WorkingHours
 from bot.keyboards.callbacks import AdminCb
-from bot.services.formatting import fmt_date, fmt_time, schedule_line
+from bot.services.formatting import fmt_date, fmt_time, period_text, schedule_line
 
 
 def _cb(action: str, id: int = 0, arg: str = "") -> str:
@@ -214,5 +214,26 @@ def no_reason_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text=texts.BTN_NO_REASON, callback_data=_cb("off_noreason"))
     builder.button(text=texts.BTN_CANCEL_INPUT, callback_data=_cb("cancel_input"))
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def time_offs_kb(master_id: int, time_offs: Sequence[TimeOff], tz: ZoneInfo) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for time_off in time_offs:
+        builder.button(
+            text=texts.BTN_DELETE_TIME_OFF.format(period=period_text(time_off.start_dt, time_off.end_dt, tz)),
+            callback_data=_cb("off_del", time_off.id),
+        )
+    builder.button(text=texts.BTN_ADD_TIME_OFF, callback_data=_cb("off_add", master_id))
+    builder.button(text=texts.BTN_BACK_TO_MASTER, callback_data=_cb("mst", master_id))
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def time_off_delete_kb(time_off_id: int, master_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text=texts.BTN_DELETE_YES, callback_data=_cb("off_del_yes", time_off_id))
+    builder.button(text=texts.BTN_DELETE_NO, callback_data=_cb("off_m", master_id))
     builder.adjust(1)
     return builder.as_markup()
