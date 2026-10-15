@@ -37,6 +37,12 @@ def menu_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def back_kb(action: str, id: int = 0, text: str = texts.BTN_ADMIN_MENU) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text=text, callback_data=_cb(action, id))
+    return builder.as_markup()
+
+
 def back_to_menu_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     _menu_button(builder)

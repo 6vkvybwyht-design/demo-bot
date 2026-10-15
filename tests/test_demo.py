@@ -12,6 +12,7 @@ from bot.db.models import Booking, BookingStatus, Client, Master, Service, TimeO
 from bot.db.session import create_session_factory
 from bot.keyboards.callbacks import AdminCb
 from bot.main import create_scheduler
+from bot.states import AdminStates
 from bot.services.demo import (
     DEMO_CLIENT_TG_BASE,
     Viewer,
@@ -296,22 +297,30 @@ async def test_reset_restores_everything(demo_dp, visitor, engine, business):
     async with factory() as session:
         svc = await session.scalar(select(Service).where(Service.name == "Чоловіча стрижка"))
         master = await session.scalar(select(Master).where(Master.name == "Дмитро"))
-    await visitor.click(_cb("svc_edit", svc.id, "name"))
-    await visitor.send("Зламана послуга")
+    await visitor.click(_cb("svc_edit", svc.id, "price"))
+    await visitor.send("999")
+    await visitor.click(_cb("svc_hide_force", svc.id))
     await visitor.click(_cb("mst_hide_force", master.id))
     await visitor.click(_cb("sched_day", master.id, "0"))
     await visitor.send("вихідний")
     if visitor.last_text().startswith("⚠️"):
         await visitor.click(visitor.button(texts.BTN_FORCE_SAVE))
-    await visitor.click(_cb("svc_add"))
-    for answer in ("Нова", "30", "100"):
-        await visitor.send(answer)
+    await visitor.click(_cb("off_add", master.id))
+    await visitor.send(f"{_in(72).astimezone(business.booking.tz):%d.%m}")
+    if visitor.last_text().startswith("⚠️"):
+        await visitor.click(visitor.button(texts.BTN_FORCE_SAVE))
+    async with factory() as session:  # зміни справді відбулися
+        changed = await session.get(Service, svc.id)
+        assert (changed.price, changed.is_active) == (999, False)
+        assert await session.scalar(select(func.count()).select_from(TimeOff)) == 2
 
     await reset_demo(factory, business)
 
     async with factory() as session:
-        names = set((await session.scalars(select(Service.name))).all())
-        assert names == {name for name, _, _ in SERVICES.values()}
+        services = (await session.scalars(select(Service))).all()
+        assert {(s.name, s.price, s.is_active) for s in services} == {
+            (name, price, True) for name, _, price in SERVICES.values()
+        }
         dmytro = await session.scalar(select(Master).where(Master.name == "Дмитро"))
         assert dmytro.is_active
         visitor_client = await session.scalar(select(Client).where(Client.telegram_id == VISITOR))
@@ -347,3 +356,84 @@ async def test_real_admin_cancel_of_fake_client_does_not_try_to_send(demo_dp, de
     await owner.click(_cb("bk_cancel_yes", demo_bookings["fake"]))
     assert owner.sent_to(FAKE) == []
     assert "Не вдалося сповістити клієнта" in owner.last_text()
+
+
+
+# --- Довільний текст у демо вимкнений -----------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("action", "arg", "back"),
+    [
+        ("svc_add", "", "svcs"),
+        ("svc_edit", "name", "svc"),
+        ("mst_add", "", "masters"),
+        ("mst_edit", "name", "mst"),
+    ],
+)
+async def test_demo_owner_cannot_add_or_rename(visitor, engine, action, arg, back):
+    service_id = await _service_id(engine, "Стрижка")
+    master_id = await _master_id(engine, "Дмитро")
+    item_id = {"svc": service_id, "mst": master_id}.get(back, 0)
+
+    await visitor.click(_cb(action, item_id, arg))
+    assert visitor.last_text() == texts.DEMO_NAMES_DISABLED
+    assert visitor.buttons() == [(texts.BTN_BACK, _cb(back, item_id))]
+
+    await visitor.send("Будь-який текст")  # не сприймається як назва
+    async with create_session_factory(engine)() as session:
+        assert set((await session.scalars(select(Service.name))).all()) == {"Стрижка", "Борода"}
+        assert set((await session.scalars(select(Master.name))).all()) == {"Олександр", "Дмитро", "Максим"}
+
+
+async def test_demo_owner_forged_input_state_is_rejected(demo_dp, visitor, engine):
+    """Навіть якщо опинитися в стані введення назви — текст не збережеться."""
+    state = demo_dp.fsm.resolve_context(visitor.bot, chat_id=VISITOR, user_id=VISITOR)
+    await state.set_state(AdminStates.input)
+    await state.set_data({"kind": "svc_name", "id": await _service_id(engine, "Стрижка")})
+    await visitor.send("Реклама")
+    assert visitor.last_text() == texts.DEMO_NAMES_DISABLED
+    async with create_session_factory(engine)() as session:
+        assert await session.scalar(select(func.count()).where(Service.name == "Реклама")) == 0
+
+
+async def test_demo_owner_can_still_change_numbers_hide_and_schedule(visitor, engine):
+    service_id = await _service_id(engine, "Стрижка")
+    master_id = await _master_id(engine, "Дмитро")
+    await visitor.click(_cb("svc_edit", service_id, "price"))
+    await visitor.send("650")
+    assert "650 грн" in visitor.last_text()
+    await visitor.click(_cb("svc_edit", service_id, "duration_min"))
+    await visitor.send("60")
+    await visitor.click(_cb("svc_hide", service_id))
+    await visitor.click(_cb("sched_day", master_id, "6"))
+    await visitor.send("10:00-18:00")
+    async with create_session_factory(engine)() as session:
+        svc = await session.get(Service, service_id)
+        assert (svc.price, svc.duration_min, svc.is_active) == (650, 60, False)
+
+
+async def test_demo_owner_time_off_skips_free_text_reason(visitor, engine, business):
+    master_id = await _master_id(engine, "Олександр")
+    day = _in(72).astimezone(business.booking.tz)
+    await visitor.click(_cb("off_add", master_id))
+    await visitor.send(f"{day:%d.%m} 10:00-13:00")
+    assert visitor.last_text().startswith("✅ Час заблоковано:")  # без кроку «Причина»
+    async with create_session_factory(engine)() as session:
+        [time_off] = (await session.scalars(select(TimeOff))).all()
+    assert time_off.reason is None
+
+
+async def test_real_admin_in_demo_can_add_and_rename(demo_dp, engine):
+    owner = TelegramUser(demo_dp, user_id=ADMIN_ID, name="Власник")
+    await owner.click(_cb("mst_add"))
+    await owner.send("Віталій")
+    assert owner.last_text().startswith("👤 <b>Віталій</b>")
+    await owner.click(_cb("off_add", await _master_id(engine, "Віталій")))
+    await owner.send(f"{_in(72).astimezone(demo_dp['business'].booking.tz):%d.%m}")
+    assert owner.last_text() == texts.ASK_REASON  # причина для справжнього власника лишається
+
+
+async def _service_id(engine, name: str) -> int:
+    async with create_session_factory(engine)() as session:
+        return await session.scalar(select(Service.id).where(Service.name == name))

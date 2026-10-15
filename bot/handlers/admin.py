@@ -573,30 +573,58 @@ async def _ask(event: Event, state: FSMContext, prompt: str, reply_markup=None, 
     await _render(event, prompt, reply_markup or kb.cancel_input_kb())
 
 
+# Що вводиться довільним текстом, який у демо побачили б інші відвідувачі
+_FREE_TEXT_KINDS = {"svc_new_name", "svc_name", "mst_new_name", "mst_name"}
+
+
+async def _names_disabled(callback: CallbackQuery, state: FSMContext, back: tuple[str, int]) -> None:
+    """У демо додавання й перейменування майстрів і послуг вимкнені для відвідувачів."""
+    await state.clear()
+    await callback.message.edit_text(
+        texts.DEMO_NAMES_DISABLED, reply_markup=kb.back_kb(*back, text=texts.BTN_BACK)
+    )
+
+
 @router.callback_query(AdminCb.filter(F.action == "svc_add"))
-async def add_service(callback: CallbackQuery, state: FSMContext) -> None:
+async def add_service(callback: CallbackQuery, state: FSMContext, viewer: Viewer) -> None:
+    if viewer.is_demo_owner:
+        await _names_disabled(callback, state, ("svcs", 0))
+        return
     await state.clear()
     await _ask(callback, state, texts.ASK_SERVICE_NAME, kind="svc_new_name")
 
 
 @router.callback_query(AdminCb.filter(F.action == "svc_edit"))
-async def edit_service(callback: CallbackQuery, callback_data: AdminCb, state: FSMContext) -> None:
+async def edit_service(
+    callback: CallbackQuery, callback_data: AdminCb, state: FSMContext, viewer: Viewer
+) -> None:
+    kind = f"svc_{callback_data.arg}"
+    if viewer.is_demo_owner and kind in _FREE_TEXT_KINDS:
+        await _names_disabled(callback, state, ("svc", callback_data.id))
+        return
     await state.clear()
-    await _ask(callback, state, _SERVICE_PROMPTS[callback_data.arg],
-               kind=f"svc_{callback_data.arg}", id=callback_data.id)
+    await _ask(callback, state, _SERVICE_PROMPTS[callback_data.arg], kind=kind, id=callback_data.id)
 
 
 @router.callback_query(AdminCb.filter(F.action == "mst_add"))
-async def add_master(callback: CallbackQuery, state: FSMContext) -> None:
+async def add_master(callback: CallbackQuery, state: FSMContext, viewer: Viewer) -> None:
+    if viewer.is_demo_owner:
+        await _names_disabled(callback, state, ("masters", 0))
+        return
     await state.clear()
     await _ask(callback, state, texts.ASK_MASTER_NAME, kind="mst_new_name")
 
 
 @router.callback_query(AdminCb.filter(F.action == "mst_edit"))
-async def edit_master(callback: CallbackQuery, callback_data: AdminCb, state: FSMContext) -> None:
+async def edit_master(
+    callback: CallbackQuery, callback_data: AdminCb, state: FSMContext, viewer: Viewer
+) -> None:
+    kind = f"mst_{callback_data.arg}"
+    if viewer.is_demo_owner and kind in _FREE_TEXT_KINDS:
+        await _names_disabled(callback, state, ("mst", callback_data.id))
+        return
     await state.clear()
-    await _ask(callback, state, _MASTER_PROMPTS[callback_data.arg],
-               kind=f"mst_{callback_data.arg}", id=callback_data.id)
+    await _ask(callback, state, _MASTER_PROMPTS[callback_data.arg], kind=kind, id=callback_data.id)
 
 
 @router.message(AdminStates.input, F.text)
@@ -606,6 +634,11 @@ async def got_input(
 ) -> None:
     data = await state.get_data()
     kind, text = data["kind"], message.text
+    if viewer.is_demo_owner and kind in _FREE_TEXT_KINDS | {"reason"}:
+        # Сюди демо-власник потрапити не може, але не покладаємося лише на кнопки
+        await state.clear()
+        await message.answer(texts.DEMO_NAMES_DISABLED, reply_markup=kb.back_to_menu_kb())
+        return
     try:
         await _handle_input(message, state, session, business, viewer, kind, text, data)
     except InputError:
@@ -660,8 +693,12 @@ async def _handle_input(
                           weekday=data["weekday"], hours_text=text, force=False)
     elif kind == "period":
         start, end = admin.parse_period(text, _today(business), business.booking.tz)
-        await _ask(message, state, texts.ASK_REASON, kb.no_reason_kb(), kind="reason",
-                   start=start.isoformat(), end=end.isoformat())
+        await state.update_data(start=start.isoformat(), end=end.isoformat())
+        if viewer.is_demo_owner:
+            # Причина — довільний текст, який у демо побачили б інші: зберігаємо без неї
+            await _save_time_off(message, state, session, business, viewer, reason=None, force=False)
+            return
+        await _ask(message, state, texts.ASK_REASON, kb.no_reason_kb(), kind="reason")
     elif kind == "reason":
         await _save_time_off(message, state, session, business, viewer,
                              reason=admin.parse_name(text, max_length=200), force=False)
