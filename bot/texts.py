@@ -292,3 +292,13 @@ BTN_DELETE_NO = "Ні"
 TIME_OFF_DELETED = "🗑 Блокування видалено."
 TIME_OFF_GONE = "Це блокування вже видалено."
 PERIOD_FORMAT = "{start} — {end}"
+
+# Нагадування
+REMINDER = "⏰ <b>Нагадуємо про ваш запис: {when}</b>\n\n{summary}\n\n📍 {address}"
+BTN_WILL_COME = "Буду ✅"
+REMINDER_CANCEL_DEADLINE = (
+    "\n\nЯкщо плани змінилися, зателефонуйте нам: {phone}"
+)
+ATTENDANCE_CONFIRMED = "👍 Дякуємо! Чекаємо на вас."
+ADMIN_CLIENT_CONFIRMED = "👍 Клієнт підтвердив, що прийде"
+STATUS_ICON_CLIENT_CONFIRMED = "👍"

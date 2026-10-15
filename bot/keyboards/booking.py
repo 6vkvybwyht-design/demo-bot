@@ -142,3 +142,17 @@ def contacts_kb(info: BusinessInfo) -> InlineKeyboardMarkup | None:
         builder.button(text=texts.BTN_INSTAGRAM, url=info.instagram)
     builder.adjust(1)
     return builder.as_markup() if info.map_url or info.instagram else None
+
+
+def reminder_kb(booking_id: int, *, can_cancel: bool) -> InlineKeyboardMarkup:
+    """Кнопки в нагадуванні: «Буду» і (якщо ще не минув дедлайн) «Скасувати»."""
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=texts.BTN_WILL_COME, callback_data=MyBookingCb(action="attend", booking_id=booking_id)
+    )
+    if can_cancel:
+        builder.button(
+            text=texts.BTN_CANCEL_BOOKING,
+            callback_data=MyBookingCb(action="cancel", booking_id=booking_id),
+        )
+    return builder.as_markup()

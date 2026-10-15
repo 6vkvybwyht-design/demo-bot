@@ -15,6 +15,7 @@ from bot.keyboards import booking as kb
 from bot.keyboards.callbacks import MyBookingCb, NavCb, TimeCb
 from bot.services import booking as booking_service
 from bot.services import notifications
+from bot.services.reminders import reminder_text
 from bot.services.booking import (
     BookingNotFoundError,
     ChangeDeadlinePassedError,
@@ -77,6 +78,28 @@ async def my_bookings(
     for booking in bookings:
         text, markup = _card(booking, business, now)
         await message.answer(text, reply_markup=markup)
+
+
+# --- «Буду» з нагадування -----------------------------------------------------
+
+
+@router.callback_query(MyBookingCb.filter(F.action == "attend"))
+async def confirm_attendance(
+    callback: CallbackQuery, callback_data: MyBookingCb, session: AsyncSession,
+    business: BusinessConfig,
+) -> None:
+    now = utcnow()
+    try:
+        booking = await booking_service.confirm_attendance(
+            session, booking_id=callback_data.booking_id, telegram_id=callback.from_user.id, now=now
+        )
+    except BookingNotFoundError:
+        await callback.message.edit_text(texts.BOOKING_GONE)
+        return
+    can_cancel = booking_service.can_client_change(booking, business.booking, now)
+    text = reminder_text(booking, business, can_cancel=can_cancel)
+    markup = kb.booking_card_kb(booking.id) if can_cancel else None
+    await callback.message.edit_text(f"{text}\n\n{texts.ATTENDANCE_CONFIRMED}", reply_markup=markup)
 
 
 # --- Скасування ---------------------------------------------------------------
