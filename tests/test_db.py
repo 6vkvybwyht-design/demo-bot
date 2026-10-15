@@ -112,3 +112,26 @@ async def test_repo_queries(session):
     assert [m.name for m in await repo.get_masters_for_service(session, haircut.id)] == [
         "Активний"
     ]
+
+
+@pytest.mark.parametrize("target", ["master", "service", "client"])
+async def test_booking_blocks_deleting_related(session, target):
+    """Записи не видаляються каскадом: видалити майстра/послугу/клієнта з записами не можна."""
+    booking = await _make_booking(session, datetime(2026, 7, 1, 7, 0, tzinfo=UTC))
+    booking_id = booking.id
+
+    await session.delete(getattr(booking, target))
+    with pytest.raises(IntegrityError):
+        await session.commit()
+    await session.rollback()
+
+    assert await session.get(Booking, booking_id) is not None
+
+
+async def test_hiding_master_and_service_keeps_bookings(session):
+    booking = await _make_booking(session, datetime(2026, 7, 1, 7, 0, tzinfo=UTC))
+    booking.master.is_active = False
+    booking.service.is_active = False
+    await session.commit()
+
+    assert len((await session.scalars(select(Booking))).all()) == 1
