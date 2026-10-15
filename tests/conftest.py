@@ -50,8 +50,7 @@ def every_day():
     return [WorkingHours(weekday=wd, start_time=time(0), end_time=time(23, 45)) for wd in range(7)]
 
 
-@pytest.fixture
-async def dp(engine, business):
+async def _make_dp(engine, business, *, demo_mode: bool):
     factory = create_session_factory(engine)
     async with factory() as session:
         haircut = Service(name="Стрижка", duration_min=45, price=500)
@@ -64,8 +63,20 @@ async def dp(engine, business):
             Master(name="Максим", services=[beard], working_hours=every_day()),
         ])
         await session.commit()
-    settings = Settings(_env_file=None, bot_token="42:TEST", admin_ids=[ADMIN_ID])
+    settings = Settings(
+        _env_file=None, bot_token="42:TEST", admin_ids=[ADMIN_ID], demo_mode=demo_mode
+    )
     return create_dispatcher(settings, business, factory)
+
+
+@pytest.fixture
+async def dp(engine, business):
+    return await _make_dp(engine, business, demo_mode=False)
+
+
+@pytest.fixture
+async def demo_dp(engine, business):
+    return await _make_dp(engine, business, demo_mode=True)
 
 
 @pytest.fixture

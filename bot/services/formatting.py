@@ -10,6 +10,7 @@ from bot import texts
 from bot.config import BusinessInfo
 from bot.db.models import Booking, BookingStatus, Master, Service, TimeOff, WorkingHours
 from bot.services.booking import PlannedReminders
+from bot.services.demo import FULL_ACCESS, Viewer
 
 
 def fmt_time(dt: datetime, tz: ZoneInfo) -> str:
@@ -112,7 +113,9 @@ def status_label(status: BookingStatus) -> str:
     return texts.STATUS_LABELS[status.value]
 
 
-def admin_day_text(day: date, bookings: Sequence[Booking], tz: ZoneInfo) -> str:
+def admin_day_text(
+    day: date, bookings: Sequence[Booking], tz: ZoneInfo, viewer: Viewer = FULL_ACCESS
+) -> str:
     """Записи дня, згруповані за майстрами."""
     if not bookings:
         return texts.ADMIN_DAY_EMPTY.format(date=fmt_date(day))
@@ -131,21 +134,23 @@ def admin_day_text(day: date, bookings: Sequence[Booking], tz: ZoneInfo) -> str:
                 ),
                 time=fmt_time(booking.start_dt, tz),
                 service=html.quote(booking.service.name),
-                client=html.quote(booking.client.name),
+                client=html.quote(viewer.client_name(booking.client)),
             )
         )
     return texts.ADMIN_DAY.format(date=fmt_date(day), count=len(bookings), lines="\n".join(lines))
 
 
-def future_bookings_lines(bookings: Sequence[Booking], tz: ZoneInfo) -> str:
+def future_bookings_lines(
+    bookings: Sequence[Booking], tz: ZoneInfo, viewer: Viewer = FULL_ACCESS
+) -> str:
     """Список записів для попередження адміна — з телефонами клієнтів."""
     lines = [
         texts.FUTURE_BOOKING_LINE.format(
             when=fmt_when(b.start_dt, tz),
             service=html.quote(b.service.name),
             master=html.quote(b.master.name),
-            client=html.quote(b.client.name),
-            phone=html.quote(b.client.phone or texts.NO_PHONE),
+            client=html.quote(viewer.client_name(b.client)),
+            phone=html.quote(viewer.client_phone(b.client) or texts.NO_PHONE),
         )
         for b in bookings[:FUTURE_BOOKINGS_LIMIT]
     ]

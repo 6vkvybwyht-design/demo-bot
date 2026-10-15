@@ -27,6 +27,7 @@ from bot.db.models import (
     WorkingHours,
 )
 from bot.db.session import create_engine, create_session_factory
+from bot.services.demo import DEMO_CLIENT_TG_BASE  # вигадані Telegram ID демо-клієнтів
 
 # Послуги: ключ -> (назва, тривалість у хв, ціна в грн)
 SERVICES = {
@@ -56,8 +57,6 @@ CLIENTS = [
     ("Ігор", "+380934445566"),
     ("Сергій", "+380995556677"),
 ]
-# Вигадані Telegram ID, щоб не перетинатися зі справжніми користувачами
-DEMO_CLIENT_TG_BASE = 900_000_000
 
 # Шаблони зайнятих слотів (година, хвилина, послуга). Усі вміщаються в робочий
 # день, не зачіпають перерву й вирівняні по кроку 15 хв.

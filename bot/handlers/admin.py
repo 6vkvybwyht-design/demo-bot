@@ -18,6 +18,7 @@ from bot.middlewares.admin import AdminOnlyMiddleware
 from bot.services import admin, notifications
 from bot.services.admin import InputError
 from bot.services.booking import BookingNotFoundError
+from bot.services.demo import Viewer
 from bot.services.formatting import (
     admin_day_text,
     admin_master_text,
@@ -50,8 +51,11 @@ def _today(business: BusinessConfig) -> date:
 
 
 @router.message(Command("admin"))
-async def cmd_admin(message: Message, state: FSMContext) -> None:
+@router.message(F.text == texts.BTN_DEMO_OWNER)
+async def cmd_admin(message: Message, state: FSMContext, viewer: Viewer) -> None:
     await state.clear()
+    if viewer.is_demo_owner:
+        await message.answer(texts.DEMO_OWNER_INTRO)
     await message.answer(texts.ADMIN_MENU, reply_markup=kb.menu_kb())
 
 
@@ -70,22 +74,29 @@ async def cancel_input(callback: CallbackQuery, state: FSMContext) -> None:
 # --- Записи: день, тиждень, картка запису -------------------------------------
 
 
-async def show_day(event: Event, day: date, session: AsyncSession, business: BusinessConfig) -> None:
+async def show_day(
+    event: Event, day: date, session: AsyncSession, business: BusinessConfig, viewer: Viewer
+) -> None:
     tz = business.booking.tz
     bookings = await admin.bookings_for_day(session, day, tz)
-    await _render(event, admin_day_text(day, bookings, tz), kb.day_kb(day, bookings, tz))
+    await _render(
+        event, admin_day_text(day, bookings, tz, viewer), kb.day_kb(day, bookings, tz, viewer)
+    )
 
 
 @router.callback_query(AdminCb.filter(F.action == "today"))
-async def today(callback: CallbackQuery, session: AsyncSession, business: BusinessConfig) -> None:
-    await show_day(callback, _today(business), session, business)
+async def today(
+    callback: CallbackQuery, session: AsyncSession, business: BusinessConfig, viewer: Viewer
+) -> None:
+    await show_day(callback, _today(business), session, business, viewer)
 
 
 @router.callback_query(AdminCb.filter(F.action == "day"))
 async def day(
-    callback: CallbackQuery, callback_data: AdminCb, session: AsyncSession, business: BusinessConfig
+    callback: CallbackQuery, callback_data: AdminCb, session: AsyncSession,
+    business: BusinessConfig, viewer: Viewer,
 ) -> None:
-    await show_day(callback, date.fromisoformat(callback_data.arg), session, business)
+    await show_day(callback, date.fromisoformat(callback_data.arg), session, business, viewer)
 
 
 @router.callback_query(AdminCb.filter(F.action == "week"))
@@ -95,7 +106,8 @@ async def week(callback: CallbackQuery, session: AsyncSession, business: Busines
 
 
 async def show_booking(
-    callback: CallbackQuery, booking_id: int, session: AsyncSession, business: BusinessConfig
+    callback: CallbackQuery, booking_id: int, session: AsyncSession, business: BusinessConfig,
+    viewer: Viewer,
 ) -> None:
     booking = await admin.get_booking(session, booking_id)
     if booking is None:
@@ -103,7 +115,8 @@ async def show_booking(
         return
     now = utcnow()
     text = texts.ADMIN_BOOKING.format(
-        details=notifications.staff_details(booking, business), status=status_label(booking.status)
+        details=notifications.staff_details(booking, business, viewer),
+        status=status_label(booking.status),
     )
     if booking.client_confirmed_at is not None:
         text += f"\n{texts.ADMIN_CLIENT_CONFIRMED}"
@@ -116,34 +129,38 @@ async def show_booking(
 
 @router.callback_query(AdminCb.filter(F.action == "bk"))
 async def booking_card(
-    callback: CallbackQuery, callback_data: AdminCb, session: AsyncSession, business: BusinessConfig
+    callback: CallbackQuery, callback_data: AdminCb, session: AsyncSession,
+    business: BusinessConfig, viewer: Viewer,
 ) -> None:
-    await show_booking(callback, callback_data.id, session, business)
+    await show_booking(callback, callback_data.id, session, business, viewer)
 
 
 @router.callback_query(AdminCb.filter(F.action.in_({"bk_done", "bk_noshow"})))
 async def mark_booking(
     callback: CallbackQuery, callback_data: AdminCb, callback_answer: CallbackAnswer,
-    session: AsyncSession, business: BusinessConfig,
+    session: AsyncSession, business: BusinessConfig, viewer: Viewer,
 ) -> None:
     status = BookingStatus.COMPLETED if callback_data.action == "bk_done" else BookingStatus.NO_SHOW
     try:
         await admin.mark_booking(session, callback_data.id, status, utcnow())
     except BookingNotFoundError:
         callback_answer.text = texts.ADMIN_BOOKING_CHANGED
-    await show_booking(callback, callback_data.id, session, business)
+    await show_booking(callback, callback_data.id, session, business, viewer)
 
 
 @router.callback_query(AdminCb.filter(F.action == "bk_cancel"))
 async def ask_admin_cancel(
-    callback: CallbackQuery, callback_data: AdminCb, session: AsyncSession, business: BusinessConfig
+    callback: CallbackQuery, callback_data: AdminCb, session: AsyncSession,
+    business: BusinessConfig, viewer: Viewer,
 ) -> None:
     booking = await admin.get_booking(session, callback_data.id)
     if booking is None or not admin.can_cancel(booking, utcnow()):
-        await show_booking(callback, callback_data.id, session, business)
+        await show_booking(callback, callback_data.id, session, business, viewer)
         return
     await callback.message.edit_text(
-        texts.ADMIN_CANCEL_CONFIRM.format(details=notifications.staff_details(booking, business)),
+        texts.ADMIN_CANCEL_CONFIRM.format(
+            details=notifications.staff_details(booking, business, viewer)
+        ),
         reply_markup=kb.admin_cancel_confirm_kb(booking.id),
     )
 
@@ -152,34 +169,42 @@ async def ask_admin_cancel(
 async def do_admin_cancel(
     callback: CallbackQuery, callback_data: AdminCb, callback_answer: CallbackAnswer,
     session: AsyncSession, business: BusinessConfig, bot: Bot, settings: Settings,
+    viewer: Viewer,
 ) -> None:
     try:
         booking = await admin.cancel_booking_by_admin(session, callback_data.id, utcnow())
     except BookingNotFoundError:
         callback_answer.text = texts.ADMIN_BOOKING_CHANGED
-        await show_booking(callback, callback_data.id, session, business)
+        await show_booking(callback, callback_data.id, session, business, viewer)
         return
 
-    notified = await notifications.notify_client_cancelled_by_admin(
-        bot, session, booking_id=booking.id, business=business
-    )
     booking = await admin.get_booking(session, booking.id)
-    client_note = (
-        texts.CLIENT_NOTIFIED
-        if notified
-        else texts.CLIENT_NOT_NOTIFIED.format(phone=booking.client.phone or texts.NO_PHONE)
-    )
+    if viewer.may_notify(booking.client.telegram_id):
+        notified = await notifications.notify_client_cancelled_by_admin(
+            bot, session, booking_id=booking.id, business=business
+        )
+        client_note = (
+            texts.CLIENT_NOTIFIED
+            if notified
+            else texts.CLIENT_NOT_NOTIFIED.format(
+                phone=viewer.client_phone(booking.client) or texts.NO_PHONE
+            )
+        )
+    else:
+        # Демо-власник скасував чужий запис: реальній людині нічого не надсилаємо
+        client_note = texts.DEMO_CLIENT_NOT_NOTIFIED
     day_iso = booking.start_dt.astimezone(business.booking.tz).date().isoformat()
     await callback.message.edit_text(
         texts.ADMIN_CANCELLED.format(
-            client_note=client_note, details=notifications.staff_details(booking, business)
+            client_note=client_note, details=notifications.staff_details(booking, business, viewer)
         ),
         reply_markup=kb.back_to_day_kb(date.fromisoformat(day_iso)),
     )
-    await notifications.notify_staff(
-        bot, session, booking_id=booking.id, template=texts.NOTIFY_CANCELLED_BY_ADMIN,
-        admin_ids=settings.admin_ids, business=business, exclude=callback.from_user.id,
-    )
+    if not viewer.is_demo_owner:  # дії демо-власника не сповіщають власників і майстрів
+        await notifications.notify_staff(
+            bot, session, booking_id=booking.id, template=texts.NOTIFY_CANCELLED_BY_ADMIN,
+            admin_ids=settings.admin_ids, business=business, exclude=callback.from_user.id,
+        )
 
 
 # --- Послуги ------------------------------------------------------------------
@@ -207,7 +232,8 @@ async def service(callback: CallbackQuery, callback_data: AdminCb, session: Asyn
 
 @router.callback_query(AdminCb.filter(F.action == "svc_hide"))
 async def hide_service(
-    callback: CallbackQuery, callback_data: AdminCb, session: AsyncSession, business: BusinessConfig
+    callback: CallbackQuery, callback_data: AdminCb, session: AsyncSession,
+    business: BusinessConfig, viewer: Viewer,
 ) -> None:
     upcoming = await admin.future_bookings(session, utcnow(), service_id=callback_data.id)
     if upcoming:
@@ -215,7 +241,7 @@ async def hide_service(
         await callback.message.edit_text(
             texts.WARN_HIDE_SERVICE.format(
                 name=svc.name, count=len(upcoming),
-                lines=future_bookings_lines(upcoming, business.booking.tz),
+                lines=future_bookings_lines(upcoming, business.booking.tz, viewer),
             ),
             reply_markup=kb.force_kb("svc_hide_force", "svc", callback_data.id,
                                      force_text=texts.BTN_FORCE_HIDE),
@@ -259,7 +285,8 @@ async def master(
 
 @router.callback_query(AdminCb.filter(F.action == "mst_hide"))
 async def hide_master(
-    callback: CallbackQuery, callback_data: AdminCb, session: AsyncSession, business: BusinessConfig
+    callback: CallbackQuery, callback_data: AdminCb, session: AsyncSession,
+    business: BusinessConfig, viewer: Viewer,
 ) -> None:
     upcoming = await admin.future_bookings(session, utcnow(), master_id=callback_data.id)
     if upcoming:
@@ -267,7 +294,7 @@ async def hide_master(
         await callback.message.edit_text(
             texts.WARN_HIDE_MASTER.format(
                 name=mst.name, count=len(upcoming),
-                lines=future_bookings_lines(upcoming, business.booking.tz),
+                lines=future_bookings_lines(upcoming, business.booking.tz, viewer),
             ),
             reply_markup=kb.force_kb("mst_hide_force", "mst", callback_data.id,
                                      force_text=texts.BTN_FORCE_HIDE),
@@ -301,7 +328,8 @@ async def master_services(callback: CallbackQuery, callback_data: AdminCb, sessi
 
 @router.callback_query(AdminCb.filter(F.action.in_({"mst_svc", "mst_svc_force"})))
 async def toggle_master_service(
-    callback: CallbackQuery, callback_data: AdminCb, session: AsyncSession, business: BusinessConfig
+    callback: CallbackQuery, callback_data: AdminCb, session: AsyncSession,
+    business: BusinessConfig, viewer: Viewer,
 ) -> None:
     master_id, service_id = callback_data.id, int(callback_data.arg)
     mst = await admin.get_master(session, master_id)
@@ -315,7 +343,7 @@ async def toggle_master_service(
             await callback.message.edit_text(
                 texts.WARN_UNLINK_SERVICE.format(
                     master=mst.name, service=svc.name, count=len(upcoming),
-                    lines=future_bookings_lines(upcoming, business.booking.tz),
+                    lines=future_bookings_lines(upcoming, business.booking.tz, viewer),
                 ),
                 reply_markup=kb.force_kb("mst_svc_force", "mst_svcs", master_id, str(service_id),
                                          force_text=texts.BTN_FORCE_UNLINK),
@@ -359,7 +387,7 @@ async def ask_hours(callback: CallbackQuery, callback_data: AdminCb, state: FSMC
 
 async def _save_hours(
     event: Event, state: FSMContext, session: AsyncSession, business: BusinessConfig,
-    *, master_id: int, weekday: int, hours_text: str, force: bool,
+    viewer: Viewer, *, master_id: int, weekday: int, hours_text: str, force: bool,
 ) -> None:
     hours = admin.parse_hours(hours_text)
     if not force:
@@ -372,7 +400,7 @@ async def _save_hours(
                 event,
                 texts.WARN_SCHEDULE.format(
                     weekday=texts.WEEKDAYS_FULL[weekday], count=len(conflicts),
-                    lines=future_bookings_lines(conflicts, business.booking.tz),
+                    lines=future_bookings_lines(conflicts, business.booking.tz, viewer),
                 ),
                 kb.force_kb("force", "sched_m", master_id),
             )
@@ -457,7 +485,7 @@ async def delete_time_off(
 
 async def _save_time_off(
     event: Event, state: FSMContext, session: AsyncSession, business: BusinessConfig,
-    *, reason: str | None, force: bool,
+    viewer: Viewer, *, reason: str | None, force: bool,
 ) -> None:
     data = await state.get_data()
     master_id = data["id"]
@@ -470,7 +498,9 @@ async def _save_time_off(
             await state.update_data(kind="time_off", reason=reason)
             await _render(
                 event,
-                texts.WARN_TIME_OFF.format(count=len(conflicts), lines=future_bookings_lines(conflicts, tz)),
+                texts.WARN_TIME_OFF.format(
+                    count=len(conflicts), lines=future_bookings_lines(conflicts, tz, viewer)
+                ),
                 kb.force_kb("force", "off_m", master_id),
             )
             return
@@ -484,9 +514,10 @@ async def _save_time_off(
 
 @router.callback_query(AdminStates.input, AdminCb.filter(F.action == "off_noreason"))
 async def time_off_without_reason(
-    callback: CallbackQuery, state: FSMContext, session: AsyncSession, business: BusinessConfig
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession,
+    business: BusinessConfig, viewer: Viewer,
 ) -> None:
-    await _save_time_off(callback, state, session, business, reason=None, force=False)
+    await _save_time_off(callback, state, session, business, viewer, reason=None, force=False)
 
 
 # --- Підтвердження дії з конфліктами ------------------------------------------
@@ -494,16 +525,19 @@ async def time_off_without_reason(
 
 @router.callback_query(AdminStates.confirm, AdminCb.filter(F.action == "force"))
 async def force_pending(
-    callback: CallbackQuery, state: FSMContext, session: AsyncSession, business: BusinessConfig
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession,
+    business: BusinessConfig, viewer: Viewer,
 ) -> None:
     data = await state.get_data()
     if data["kind"] == "hours":
         await _save_hours(
-            callback, state, session, business,
+            callback, state, session, business, viewer,
             master_id=data["id"], weekday=data["weekday"], hours_text=data["value"], force=True,
         )
     else:
-        await _save_time_off(callback, state, session, business, reason=data.get("reason"), force=True)
+        await _save_time_off(
+            callback, state, session, business, viewer, reason=data.get("reason"), force=True
+        )
 
 
 # --- Введення тексту ----------------------------------------------------------
@@ -539,47 +573,81 @@ async def _ask(event: Event, state: FSMContext, prompt: str, reply_markup=None, 
     await _render(event, prompt, reply_markup or kb.cancel_input_kb())
 
 
+# Що вводиться довільним текстом, який у демо побачили б інші відвідувачі
+_FREE_TEXT_KINDS = {"svc_new_name", "svc_name", "mst_new_name", "mst_name"}
+
+
+async def _names_disabled(callback: CallbackQuery, state: FSMContext, back: tuple[str, int]) -> None:
+    """У демо додавання й перейменування майстрів і послуг вимкнені для відвідувачів."""
+    await state.clear()
+    await callback.message.edit_text(
+        texts.DEMO_NAMES_DISABLED, reply_markup=kb.back_kb(*back, text=texts.BTN_BACK)
+    )
+
+
 @router.callback_query(AdminCb.filter(F.action == "svc_add"))
-async def add_service(callback: CallbackQuery, state: FSMContext) -> None:
+async def add_service(callback: CallbackQuery, state: FSMContext, viewer: Viewer) -> None:
+    if viewer.is_demo_owner:
+        await _names_disabled(callback, state, ("svcs", 0))
+        return
     await state.clear()
     await _ask(callback, state, texts.ASK_SERVICE_NAME, kind="svc_new_name")
 
 
 @router.callback_query(AdminCb.filter(F.action == "svc_edit"))
-async def edit_service(callback: CallbackQuery, callback_data: AdminCb, state: FSMContext) -> None:
+async def edit_service(
+    callback: CallbackQuery, callback_data: AdminCb, state: FSMContext, viewer: Viewer
+) -> None:
+    kind = f"svc_{callback_data.arg}"
+    if viewer.is_demo_owner and kind in _FREE_TEXT_KINDS:
+        await _names_disabled(callback, state, ("svc", callback_data.id))
+        return
     await state.clear()
-    await _ask(callback, state, _SERVICE_PROMPTS[callback_data.arg],
-               kind=f"svc_{callback_data.arg}", id=callback_data.id)
+    await _ask(callback, state, _SERVICE_PROMPTS[callback_data.arg], kind=kind, id=callback_data.id)
 
 
 @router.callback_query(AdminCb.filter(F.action == "mst_add"))
-async def add_master(callback: CallbackQuery, state: FSMContext) -> None:
+async def add_master(callback: CallbackQuery, state: FSMContext, viewer: Viewer) -> None:
+    if viewer.is_demo_owner:
+        await _names_disabled(callback, state, ("masters", 0))
+        return
     await state.clear()
     await _ask(callback, state, texts.ASK_MASTER_NAME, kind="mst_new_name")
 
 
 @router.callback_query(AdminCb.filter(F.action == "mst_edit"))
-async def edit_master(callback: CallbackQuery, callback_data: AdminCb, state: FSMContext) -> None:
+async def edit_master(
+    callback: CallbackQuery, callback_data: AdminCb, state: FSMContext, viewer: Viewer
+) -> None:
+    kind = f"mst_{callback_data.arg}"
+    if viewer.is_demo_owner and kind in _FREE_TEXT_KINDS:
+        await _names_disabled(callback, state, ("mst", callback_data.id))
+        return
     await state.clear()
-    await _ask(callback, state, _MASTER_PROMPTS[callback_data.arg],
-               kind=f"mst_{callback_data.arg}", id=callback_data.id)
+    await _ask(callback, state, _MASTER_PROMPTS[callback_data.arg], kind=kind, id=callback_data.id)
 
 
 @router.message(AdminStates.input, F.text)
 async def got_input(
-    message: Message, state: FSMContext, session: AsyncSession, business: BusinessConfig
+    message: Message, state: FSMContext, session: AsyncSession, business: BusinessConfig,
+    viewer: Viewer,
 ) -> None:
     data = await state.get_data()
     kind, text = data["kind"], message.text
+    if viewer.is_demo_owner and kind in _FREE_TEXT_KINDS | {"reason"}:
+        # Сюди демо-власник потрапити не може, але не покладаємося лише на кнопки
+        await state.clear()
+        await message.answer(texts.DEMO_NAMES_DISABLED, reply_markup=kb.back_to_menu_kb())
+        return
     try:
-        await _handle_input(message, state, session, business, kind, text, data)
+        await _handle_input(message, state, session, business, viewer, kind, text, data)
     except InputError:
         await message.answer(texts.INVALID_INPUT.format(hint=_HINTS[kind]), reply_markup=kb.cancel_input_kb())
 
 
 async def _handle_input(
     message: Message, state: FSMContext, session: AsyncSession, business: BusinessConfig,
-    kind: str, text: str, data: dict,
+    viewer: Viewer, kind: str, text: str, data: dict,
 ) -> None:
     # Нова послуга: назва → тривалість → ціна
     if kind == "svc_new_name":
@@ -621,12 +689,16 @@ async def _handle_input(
 
     # Графік і блокування
     elif kind == "hours":
-        await _save_hours(message, state, session, business, master_id=data["id"],
+        await _save_hours(message, state, session, business, viewer, master_id=data["id"],
                           weekday=data["weekday"], hours_text=text, force=False)
     elif kind == "period":
         start, end = admin.parse_period(text, _today(business), business.booking.tz)
-        await _ask(message, state, texts.ASK_REASON, kb.no_reason_kb(), kind="reason",
-                   start=start.isoformat(), end=end.isoformat())
+        await state.update_data(start=start.isoformat(), end=end.isoformat())
+        if viewer.is_demo_owner:
+            # Причина — довільний текст, який у демо побачили б інші: зберігаємо без неї
+            await _save_time_off(message, state, session, business, viewer, reason=None, force=False)
+            return
+        await _ask(message, state, texts.ASK_REASON, kb.no_reason_kb(), kind="reason")
     elif kind == "reason":
-        await _save_time_off(message, state, session, business,
+        await _save_time_off(message, state, session, business, viewer,
                              reason=admin.parse_name(text, max_length=200), force=False)
