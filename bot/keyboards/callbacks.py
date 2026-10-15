@@ -21,3 +21,12 @@ class TimeCb(CallbackData, prefix="tm"):
 
 class NavCb(CallbackData, prefix="nav"):
     action: str  # back / confirm
+
+
+class NoopCb(CallbackData, prefix="noop"):
+    """Кнопка-заголовок без дії (наприклад, «Ранок» над слотами)."""
+
+
+class MyBookingCb(CallbackData, prefix="my"):
+    action: str  # cancel / cancel_yes / cancel_no / move
+    booking_id: int

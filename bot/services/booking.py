@@ -1,17 +1,27 @@
 """Створення записів і робота з клієнтами."""
 
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from bot.config import BookingRules
-from bot.db.models import Booking, Client, Master, Service
+from bot.config import BookingRules, Reminders
+from bot.db.models import Booking, BookingStatus, Client, Master, Service
 from bot.services import slots
 
 
 class SlotUnavailableError(Exception):
     """Обраний час уже зайнятий або недоступний."""
+
+
+class BookingNotFoundError(Exception):
+    """Запис не знайдено, він чужий, уже скасований або минув."""
+
+
+class ChangeDeadlinePassedError(Exception):
+    """До візиту лишилося менше, ніж дедлайн скасування/перенесення."""
 
 
 async def get_client(session: AsyncSession, telegram_id: int) -> Client | None:
@@ -30,21 +40,48 @@ async def get_or_create_client(session: AsyncSession, telegram_id: int, name: st
 async def save_client_phone(
     session: AsyncSession, telegram_id: int, name: str, phone: str
 ) -> Client:
+    """Зберігає вже нормалізований номер (див. bot/services/phone.py)."""
     client = await get_or_create_client(session, telegram_id, name)
-    client.phone = normalize_phone(phone)
+    client.phone = phone
     await session.commit()
     return client
 
 
-def normalize_phone(phone: str) -> str:
-    # Telegram іноді надсилає номер без «+»
-    phone = phone.strip().replace(" ", "")
-    return phone if phone.startswith("+") else f"+{phone}"
+@dataclass(frozen=True)
+class PlannedReminders:
+    before_24h: bool
+    before_2h: bool
+
+
+def planned_reminders(start: datetime, created_at: datetime, reminders: Reminders) -> PlannedReminders:
+    """Які нагадування отримає запис.
+
+    Записи, створені менше ніж за 2 год до візиту, нагадувань не отримують;
+    нагадування за добу має сенс, лише якщо до візиту більше доби.
+    """
+    lead = start - created_at
+    if lead < timedelta(hours=2):
+        return PlannedReminders(before_24h=False, before_2h=False)
+    return PlannedReminders(
+        before_24h=reminders.before_24h and lead > timedelta(hours=24),
+        before_2h=reminders.before_2h,
+    )
 
 
 def is_within_horizon(day: date, rules: BookingRules, now: datetime) -> bool:
     today = now.astimezone(rules.tz).date()
     return today <= day < today + timedelta(days=rules.horizon_days)
+
+
+def _plan_reminders(booking: Booking, now: datetime, reminders: Reminders) -> None:
+    """Нагадування, яких запис не отримає, одразу позначаємо як оброблені.
+
+    Задача нагадувань шукає записи з reminded_* = False, тож надішле рівно те,
+    що клієнт побачив в описі після запису.
+    """
+    plan = planned_reminders(booking.start_dt, now, reminders)
+    booking.reminded_24h = not plan.before_24h
+    booking.reminded_2h = not plan.before_2h
 
 
 async def _lock_masters(session: AsyncSession, master_ids: list[int]) -> None:
@@ -70,6 +107,7 @@ async def create_booking(
     start: datetime,
     rules: BookingRules,
     now: datetime,
+    reminders: Reminders = Reminders(),
 ) -> Booking:
     """Створює запис, повторно перевіряючи слот у межах однієї транзакції.
 
@@ -113,7 +151,114 @@ async def create_booking(
             end_dt=start + timedelta(minutes=service.duration_min),
             created_at=now,
         )
+        _plan_reminders(booking, now, reminders)
         session.add(booking)
+        await session.commit()
+    except BaseException:
+        await session.rollback()
+        raise
+    return booking
+
+
+# --- Мої записи: перегляд, скасування, перенесення -----------------------------
+
+
+async def get_upcoming_bookings(
+    session: AsyncSession, telegram_id: int, now: datetime
+) -> list[Booking]:
+    """Майбутні підтверджені записи клієнта (з послугою й майстром)."""
+    result = await session.scalars(
+        select(Booking)
+        .join(Client, Client.id == Booking.client_id)
+        .where(
+            Client.telegram_id == telegram_id,
+            Booking.status == BookingStatus.CONFIRMED,
+            Booking.start_dt > now,
+        )
+        .options(selectinload(Booking.service), selectinload(Booking.master))
+        .order_by(Booking.start_dt)
+    )
+    return list(result.all())
+
+
+def can_client_change(booking: Booking, rules: BookingRules, now: datetime) -> bool:
+    """Клієнт може скасувати чи перенести запис, якщо до візиту більше за дедлайн."""
+    return booking.start_dt - now > timedelta(hours=rules.cancel_deadline_hours)
+
+
+async def get_own_booking(
+    session: AsyncSession, booking_id: int, telegram_id: int, now: datetime
+) -> Booking:
+    """Майбутній підтверджений запис цього клієнта, інакше BookingNotFoundError."""
+    booking = await session.scalar(
+        select(Booking)
+        .join(Client, Client.id == Booking.client_id)
+        .where(
+            Booking.id == booking_id,
+            Client.telegram_id == telegram_id,
+            Booking.status == BookingStatus.CONFIRMED,
+            Booking.start_dt > now,
+        )
+        .options(selectinload(Booking.service), selectinload(Booking.master))
+        .execution_options(populate_existing=True)
+    )
+    if booking is None:
+        raise BookingNotFoundError
+    return booking
+
+
+async def cancel_booking_by_client(
+    session: AsyncSession, *, booking_id: int, telegram_id: int, rules: BookingRules, now: datetime
+) -> Booking:
+    booking = await get_own_booking(session, booking_id, telegram_id, now)
+    if not can_client_change(booking, rules, now):
+        raise ChangeDeadlinePassedError
+    booking.status = BookingStatus.CANCELLED_BY_CLIENT
+    await session.commit()
+    return booking
+
+
+async def reschedule_booking(
+    session: AsyncSession,
+    *,
+    booking_id: int,
+    telegram_id: int,
+    new_start: datetime,
+    rules: BookingRules,
+    now: datetime,
+    reminders: Reminders = Reminders(),
+) -> Booking:
+    """Переносить запис до того ж майстра на новий час.
+
+    Як і при створенні, слот перевіряється в межах однієї транзакції після
+    блокування майстра. Власний запис клієнта слот не займає.
+    """
+    await session.commit()
+    try:
+        booking = await get_own_booking(session, booking_id, telegram_id, now)
+        if not can_client_change(booking, rules, now):
+            raise ChangeDeadlinePassedError
+        if not is_within_horizon(new_start.astimezone(rules.tz).date(), rules, now):
+            raise SlotUnavailableError
+
+        await _lock_masters(session, [booking.master_id])
+        # Після блокування перечитуємо запис: його могли скасувати паралельно
+        booking = await get_own_booking(session, booking_id, telegram_id, now)
+        if not await slots.is_slot_available(
+            session,
+            master_id=booking.master_id,
+            service=booking.service,
+            start=new_start,
+            rules=rules,
+            now=now,
+            exclude_booking_id=booking.id,
+        ):
+            raise SlotUnavailableError
+
+        booking.start_dt = new_start
+        booking.end_dt = new_start + timedelta(minutes=booking.service.duration_min)
+        # Новий час — нагадування плануються заново
+        _plan_reminders(booking, now, reminders)
         await session.commit()
     except BaseException:
         await session.rollback()

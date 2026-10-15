@@ -7,6 +7,7 @@ from bot.config import DEFAULT_BUSINESS_CONFIG, BookingRules, Settings, load_bus
 def test_business_yaml_loads():
     cfg = load_business_config(DEFAULT_BUSINESS_CONFIG)
     assert cfg.business.name == "Demo Barber"
+    assert cfg.business.address == "м. Львів, пл. Ринок, 1"
     assert cfg.booking.timezone == "Europe/Kyiv"
     assert cfg.booking.slot_step_min == 15
     assert cfg.booking.horizon_days == 14

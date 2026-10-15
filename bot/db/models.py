@@ -16,7 +16,6 @@ from sqlalchemy import (
     Time,
     TypeDecorator,
     UniqueConstraint,
-    func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 

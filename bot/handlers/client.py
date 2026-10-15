@@ -3,7 +3,7 @@
 from datetime import UTC, date, datetime
 
 from aiogram import F, Router, html
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,13 +13,19 @@ from bot.config import BusinessConfig
 from bot.db import repo
 from bot.db.models import Master, Service, utcnow
 from bot.keyboards import booking as kb
-from bot.keyboards.callbacks import ANY_MASTER, DateCb, MasterCb, NavCb, ServiceCb, TimeCb
+from bot.keyboards.callbacks import ANY_MASTER, DateCb, MasterCb, NavCb, NoopCb, ServiceCb, TimeCb
 from bot.keyboards.main_menu import main_menu_kb
 from bot.services import booking as booking_service
 from bot.services import slots
 from bot.services.booking import SlotUnavailableError
-from bot.services.formatting import booking_summary, fmt_date, fmt_time
-from bot.states import BookingStates
+from bot.services.formatting import (
+    booking_done_text,
+    booking_summary,
+    contacts_text,
+    progress_text,
+)
+from bot.services.phone import normalize_contact_phone, parse_ua_phone
+from bot.states import BookingStates, RescheduleStates
 
 router = Router(name="client")
 
@@ -46,10 +52,50 @@ async def _render(event: Event, text: str, reply_markup=None) -> None:
         await event.answer(text, reply_markup=reply_markup)
 
 
+@router.message(F.text == texts.BTN_CONTACTS)
+async def show_contacts(message: Message, business: BusinessConfig) -> None:
+    await message.answer(
+        contacts_text(business.business), reply_markup=kb.contacts_kb(business.business)
+    )
+
+
+async def _moving_booking_id(state: FSMContext) -> int | None:
+    """id запису, якщо зараз триває перенесення, інакше None (звичайний запис)."""
+    return (await state.get_data()).get("booking_id")
+
+
 async def _load_choice(session: AsyncSession, state: FSMContext) -> tuple[Service, int | None]:
     data = await state.get_data()
     service = await session.get(Service, data["service_id"])
     return service, data.get("master_id")
+
+
+# Порядок кроків для наростаючого підсумку
+_PROGRESS_STEPS = ("service", "master", "day", "start", "phone")
+
+
+async def _progress(
+    prompt: str,
+    state: FSMContext,
+    session: AsyncSession,
+    business: BusinessConfig,
+    *,
+    upto: str,
+) -> str:
+    """Підказка кроку з підсумком уже зроблених виборів (усіх кроків до `upto`)."""
+    done = _PROGRESS_STEPS[: _PROGRESS_STEPS.index(upto)]
+    data = await state.get_data()
+    master_id = data.get("master_id")
+    master = await session.get(Master, master_id) if "master" in done and master_id else None
+    return progress_text(
+        prompt,
+        service=await session.get(Service, data["service_id"]) if "service" in done else None,
+        master_name=master.name if master else None,
+        any_master="master" in done and master_id is None,
+        day=date.fromisoformat(data["day"]) if "day" in done else None,
+        start=datetime.fromisoformat(data["start"]) if "start" in done else None,
+        tz=business.booking.tz,
+    )
 
 
 async def show_services(
@@ -64,41 +110,53 @@ async def show_services(
     await _render(event, texts.CHOOSE_SERVICE, kb.services_kb(services))
 
 
-async def show_masters(event: Event, state: FSMContext, session: AsyncSession) -> None:
+async def show_masters(
+    event: Event, state: FSMContext, session: AsyncSession, business: BusinessConfig
+) -> None:
     service, _ = await _load_choice(session, state)
     masters = await slots.masters_for_service(session, service.id)
     await state.set_state(BookingStates.master)
     if not masters:
         await _render(event, texts.NO_MASTERS, kb.back_kb())
         return
-    await _render(
-        event, texts.CHOOSE_MASTER.format(service=html.quote(service.name)), kb.masters_kb(masters)
-    )
+    text = await _progress(texts.CHOOSE_MASTER, state, session, business, upto="master")
+    await _render(event, text, kb.masters_kb(masters))
 
 
 async def show_dates(
     event: Event, state: FSMContext, session: AsyncSession, business: BusinessConfig
 ) -> None:
     service, master_id = await _load_choice(session, state)
+    moving_id = await _moving_booking_id(state)
     rules = business.booking
     dates = await slots.get_available_dates(
-        session, service=service, master_id=master_id, rules=rules, now=utcnow()
+        session, service=service, master_id=master_id, rules=rules, now=utcnow(),
+        exclude_booking_id=moving_id,
     )
-    await state.set_state(BookingStates.date)
+    await state.set_state(RescheduleStates.date if moving_id else BookingStates.date)
     if not dates:
         text = texts.NO_DATES.format(days=rules.horizon_days, phone=business.business.phone)
         await _render(event, text, kb.back_kb())
         return
-    await _render(event, texts.CHOOSE_DATE, kb.dates_kb(dates))
+    prompt = texts.MOVE_CHOOSE_DATE if moving_id else texts.CHOOSE_DATE
+    text = await _progress(prompt, state, session, business, upto="day")
+    await _render(event, text, kb.dates_kb(dates))
 
 
 async def _free_starts(
-    session: AsyncSession, service: Service, master_id: int | None, day: date, business: BusinessConfig
+    session: AsyncSession,
+    service: Service,
+    master_id: int | None,
+    day: date,
+    business: BusinessConfig,
+    exclude_booking_id: int | None,
 ) -> list[datetime]:
     common = dict(service=service, day=day, rules=business.booking, now=utcnow())
     if master_id is None:
         return list(await slots.get_free_slots_any_master(session, **common))
-    return await slots.get_free_slots(session, master_id=master_id, **common)
+    return await slots.get_free_slots(
+        session, master_id=master_id, exclude_booking_id=exclude_booking_id, **common
+    )
 
 
 async def show_times(
@@ -109,14 +167,16 @@ async def show_times(
     notice: str | None = None,
 ) -> None:
     service, master_id = await _load_choice(session, state)
+    moving_id = await _moving_booking_id(state)
     day = date.fromisoformat((await state.get_data())["day"])
-    starts = await _free_starts(session, service, master_id, day, business)
+    starts = await _free_starts(session, service, master_id, day, business, moving_id)
     if not starts:
         # Поки клієнт обирав, вільний час на цю дату закінчився
         await show_dates(event, state, session, business)
         return
-    await state.set_state(BookingStates.time)
-    text = texts.CHOOSE_TIME.format(date=fmt_date(day))
+    await state.set_state(RescheduleStates.time if moving_id else BookingStates.time)
+    prompt = texts.MOVE_CHOOSE_TIME if moving_id else texts.CHOOSE_TIME
+    text = await _progress(prompt, state, session, business, upto="start")
     if notice:
         text = f"{notice}\n\n{text}"
     await _render(event, text, kb.times_kb(starts, business.booking.tz))
@@ -159,7 +219,7 @@ async def pick_service(
         await show_services(callback, state, session, business)
         return
     await state.update_data(service_id=service.id)
-    await show_masters(callback, state, session)
+    await show_masters(callback, state, session, business)
 
 
 @router.callback_query(BookingStates.master, MasterCb.filter())
@@ -172,7 +232,7 @@ async def pick_master(
     await show_dates(callback, state, session, business)
 
 
-@router.callback_query(BookingStates.date, DateCb.filter())
+@router.callback_query(StateFilter(BookingStates.date, RescheduleStates.date), DateCb.filter())
 async def pick_date(
     callback: CallbackQuery, callback_data: DateCb, state: FSMContext,
     session: AsyncSession, business: BusinessConfig,
@@ -194,10 +254,9 @@ async def pick_time(
         await show_confirm(callback, state, session, business)
         return
 
-    tz = business.booking.tz
     await state.set_state(BookingStates.phone)
     await callback.message.edit_text(
-        texts.TIME_PICKED.format(date=fmt_date(start.astimezone(tz).date()), time=fmt_time(start, tz))
+        await _progress(texts.PHONE_STEP, state, session, business, upto="phone")
     )
     await callback.message.answer(texts.ASK_PHONE, reply_markup=kb.share_phone_kb())
 
@@ -209,8 +268,15 @@ async def got_phone(
     if message.contact.user_id != message.from_user.id:
         await message.answer(texts.PHONE_NOT_OWN, reply_markup=kb.share_phone_kb())
         return
+    phone = normalize_contact_phone(message.contact.phone_number)
+    await _phone_received(message, phone, state, session, business)
+
+
+async def _phone_received(
+    message: Message, phone: str, state: FSMContext, session: AsyncSession, business: BusinessConfig
+) -> None:
     await booking_service.save_client_phone(
-        session, message.from_user.id, message.from_user.full_name, message.contact.phone_number
+        session, message.from_user.id, message.from_user.full_name, phone
     )
     await message.answer(texts.PHONE_SAVED, reply_markup=main_menu_kb())
     await show_confirm(message, state, session, business)
@@ -224,9 +290,21 @@ async def phone_back(
     await show_times(message, state, session, business)
 
 
+@router.message(BookingStates.phone, F.text)
+async def got_phone_text(
+    message: Message, state: FSMContext, session: AsyncSession, business: BusinessConfig
+) -> None:
+    phone = parse_ua_phone(message.text)
+    if phone is None:
+        await message.answer(texts.PHONE_INVALID, reply_markup=kb.share_phone_kb())
+        return
+    await _phone_received(message, phone, state, session, business)
+
+
 @router.message(BookingStates.phone)
 async def phone_expected(message: Message) -> None:
-    await message.answer(texts.ASK_PHONE, reply_markup=kb.share_phone_kb())
+    # Стікер, фото тощо замість номера
+    await message.answer(texts.PHONE_INVALID, reply_markup=kb.share_phone_kb())
 
 
 @router.callback_query(BookingStates.confirm, NavCb.filter(F.action == "confirm"))
@@ -241,7 +319,7 @@ async def confirm_booking(
     try:
         booking = await booking_service.create_booking(
             session, client=client, service=service, master_id=master_id,
-            start=start, rules=business.booking, now=utcnow(),
+            start=start, rules=business.booking, now=utcnow(), reminders=business.reminders,
         )
     except SlotUnavailableError:
         await show_times(callback, state, session, business, notice=texts.SLOT_TAKEN)
@@ -252,9 +330,18 @@ async def confirm_booking(
     summary = booking_summary(
         service=service, master_name=master.name, start=booking.start_dt, tz=business.booking.tz
     )
-    await callback.message.edit_text(
-        texts.BOOKING_DONE.format(summary=summary, address=html.quote(business.business.address))
+    reminders = booking_service.planned_reminders(
+        booking.start_dt, booking.created_at, business.reminders
     )
+    await callback.message.edit_text(
+        booking_done_text(summary=summary, address=business.business.address, reminders=reminders)
+    )
+
+
+@router.callback_query(NoopCb.filter())
+async def noop(callback: CallbackQuery) -> None:
+    # Заголовок групи слотів: нічого не робимо, «годинник» прибере CallbackAnswerMiddleware
+    pass
 
 
 # --- Назад --------------------------------------------------------------------
@@ -274,11 +361,15 @@ async def back_from_master(
 
 
 @router.callback_query(BookingStates.date, NavCb.filter(F.action == "back"))
-async def back_from_date(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    await show_masters(callback, state, session)
+async def back_from_date(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession, business: BusinessConfig
+) -> None:
+    await show_masters(callback, state, session, business)
 
 
-@router.callback_query(BookingStates.time, NavCb.filter(F.action == "back"))
+@router.callback_query(
+    StateFilter(BookingStates.time, RescheduleStates.time), NavCb.filter(F.action == "back")
+)
 async def back_from_time(
     callback: CallbackQuery, state: FSMContext, session: AsyncSession, business: BusinessConfig
 ) -> None:
