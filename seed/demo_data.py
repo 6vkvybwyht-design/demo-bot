@@ -1,4 +1,4 @@
-"""Демо-дані барбершопу.
+"""Демо-дані з профілю бізнесу (розділ `demo` у config/profiles/<профіль>.yaml).
 
 Запуск: python -m seed.demo_data
 Застосовує міграції, ВИДАЛЯЄ всі дані й заповнює базу заново. Тому працює
@@ -15,7 +15,7 @@ from alembic.config import Config
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.config import BASE_DIR, BaseAppSettings, BusinessConfig, load_business_config
+from bot.config import BASE_DIR, BaseAppSettings, BusinessConfig, DemoData, load_business_config
 from bot.db.models import (
     Booking,
     BookingStatus,
@@ -29,48 +29,6 @@ from bot.db.models import (
 )
 from bot.db.session import create_engine, create_session_factory
 from bot.services.demo import DEMO_CLIENT_TG_BASE  # вигадані Telegram ID демо-клієнтів
-
-# Послуги: ключ -> (назва, тривалість у хв, ціна в грн)
-SERVICES = {
-    "haircut": ("Чоловіча стрижка", 45, 500),
-    "beard": ("Стрижка бороди", 30, 350),
-    "combo": ("Комплекс (стрижка + борода)", 75, 750),
-    "kids": ("Дитяча стрижка", 30, 350),
-    "gray": ("Камуфлювання сивини", 30, 400),
-}
-
-# Майстри та послуги, які вони виконують
-MASTERS = [
-    ("Олександр", ["haircut", "beard", "combo", "kids", "gray"]),
-    ("Дмитро", ["haircut", "beard", "combo", "kids"]),
-    ("Максим", ["haircut", "beard", "combo", "gray"]),
-]
-
-# Графік: Пн–Сб 10:00–20:00, перерва 14:00–15:00
-WORKDAYS = range(0, 6)
-DAY_START, DAY_END = time(10, 0), time(20, 0)
-BREAK_START, BREAK_END = time(14, 0), time(15, 0)
-
-CLIENTS = [
-    ("Андрій", "+380501112233"),
-    ("Богдан", "+380672223344"),
-    ("Віктор", "+380633334455"),
-    ("Ігор", "+380934445566"),
-    ("Сергій", "+380995556677"),
-]
-
-# Шаблони зайнятих слотів (година, хвилина, послуга). Усі вміщаються в робочий
-# день, не зачіпають перерву й вирівняні по кроку 15 хв.
-BOOKING_PATTERNS = [
-    [(10, 0, "haircut"), (11, 30, "combo"), (16, 0, "beard"), (18, 15, "haircut")],
-    [(10, 30, "beard"), (12, 0, "haircut"), (15, 0, "combo"), (17, 45, "kids")],
-    [(11, 0, "haircut"), (13, 0, "beard"), (16, 30, "gray")],
-]
-BOOKING_DAYS = 7  # на скільки днів уперед (від сьогодні) генеруємо записи
-
-# Блокування часу: (індекс майстра, зсув у днях, початок, кінець, причина)
-TIME_OFF = [(1, 2, time(10, 0), time(13, 0), "Особисті справи")]
-
 
 @dataclass
 class SeedSummary:
@@ -92,66 +50,83 @@ def _local_dt(day: date, at: time, business: BusinessConfig) -> datetime:
     return datetime.combine(day, at, tzinfo=business.booking.tz).astimezone(UTC)
 
 
+def _service_for(
+    master: Master, wanted: Service, services: dict[str, Service], demo: DemoData
+) -> Service | None:
+    """Послуга шаблону, якщо майстер її робить; інакше — заміна, що вміщається в той самий час."""
+    if wanted in master.services:
+        return wanted
+    fallback = services.get(demo.fallback_service) if demo.fallback_service else None
+    if fallback is not None and fallback in master.services:
+        return fallback
+    fitting = [s for s in master.services if s.duration_min <= wanted.duration_min]
+    return max(fitting, key=lambda s: s.duration_min, default=None)
+
+
 async def reset_demo_data(
     session: AsyncSession, business: BusinessConfig, now: datetime | None = None
 ) -> SeedSummary:
-    """Очищає базу й заповнює демо-даними відносно поточного моменту."""
+    """Очищає базу й заповнює демо-даними профілю відносно поточного моменту."""
+    demo = business.demo
+    if demo is None:
+        raise ValueError("У профілі бізнесу немає розділу demo — демо-дані взяти нізвідки")
     now = now or datetime.now(UTC)
     today = now.astimezone(business.booking.tz).date()
+    schedule = demo.schedule
 
     await clear_all(session)
 
     services = {
-        key: Service(name=name, duration_min=duration, price=price)
-        for key, (name, duration, price) in SERVICES.items()
+        s.key: Service(name=s.name, duration_min=s.duration_min, price=s.price)
+        for s in demo.services
     }
     session.add_all(services.values())
 
-    masters: list[Master] = []
-    for name, service_keys in MASTERS:
-        master = Master(name=name, services=[services[k] for k in service_keys])
+    masters: dict[str, Master] = {}
+    for item in demo.masters:
+        master = Master(name=item.name, services=[services[k] for k in item.services])
         master.working_hours = [
             WorkingHours(
                 weekday=weekday,
-                start_time=DAY_START,
-                end_time=DAY_END,
-                break_start=BREAK_START,
-                break_end=BREAK_END,
+                start_time=schedule.start,
+                end_time=schedule.end,
+                break_start=schedule.break_start,
+                break_end=schedule.break_end,
             )
-            for weekday in WORKDAYS
+            for weekday in schedule.weekdays
         ]
-        masters.append(master)
-    session.add_all(masters)
+        masters[item.name] = master
+    session.add_all(masters.values())
 
     clients = [
-        Client(telegram_id=DEMO_CLIENT_TG_BASE + i, name=name, phone=phone)
-        for i, (name, phone) in enumerate(CLIENTS, start=1)
+        Client(telegram_id=DEMO_CLIENT_TG_BASE + i, name=c.name, phone=c.phone)
+        for i, c in enumerate(demo.clients, start=1)
     ]
     session.add_all(clients)
 
     time_off = [
         TimeOff(
-            master=masters[master_idx],
-            start_dt=_local_dt(today + timedelta(days=offset), start, business),
-            end_dt=_local_dt(today + timedelta(days=offset), end, business),
-            reason=reason,
+            master=masters[t.master],
+            start_dt=_local_dt(today + timedelta(days=t.day_offset), t.start, business),
+            end_dt=_local_dt(today + timedelta(days=t.day_offset), t.end, business),
+            reason=t.reason,
         )
-        for master_idx, offset, start, end, reason in TIME_OFF
+        for t in demo.time_off
     ]
     session.add_all(time_off)
 
     bookings: list[Booking] = []
-    for offset in range(BOOKING_DAYS):
+    patterns = demo.booking_patterns
+    for offset in range(demo.booking_days):
         day = today + timedelta(days=offset)
-        if day.weekday() not in WORKDAYS:
+        if day.weekday() not in schedule.weekdays:
             continue
-        for m_idx, master in enumerate(masters):
-            pattern = BOOKING_PATTERNS[(offset + m_idx) % len(BOOKING_PATTERNS)]
-            for hour, minute, service_key in pattern:
-                service = services[service_key]
-                if service not in master.services:
-                    service = services["haircut"]
-                start = _local_dt(day, time(hour, minute), business)
+        for m_idx, master in enumerate(masters.values()):
+            for slot in patterns[(offset + m_idx) % len(patterns)] if patterns else []:
+                service = _service_for(master, services[slot.service], services, demo)
+                if service is None:
+                    continue
+                start = _local_dt(day, slot.time, business)
                 end = start + timedelta(minutes=service.duration_min)
                 if any(t.master is master and start < t.end_dt and t.start_dt < end for t in time_off):
                     continue

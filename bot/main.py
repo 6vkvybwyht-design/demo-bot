@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -20,6 +21,7 @@ from bot.config import (
     get_settings,
     load_business_config,
 )
+from bot import texts
 from bot.db.fsm_storage import DbStorage
 from bot.db.models import utcnow
 from bot.db.session import create_engine, create_session_factory
@@ -92,6 +94,8 @@ def create_scheduler(
 def create_dispatcher(
     settings: Settings, business: BusinessConfig, session_factory: async_sessionmaker
 ) -> Dispatcher:
+    # Тексти профілю бізнесу (емодзі послуг тощо) поверх нейтральних текстів
+    texts.apply_overrides(business.texts)
     # settings і business потрапляють у хендлери як іменовані аргументи
     # Стан діалогів — у базі, щоб незавершений запис пережив перезапуск бота
     dp = Dispatcher(storage=DbStorage(session_factory), settings=settings, business=business)
@@ -139,7 +143,8 @@ async def main() -> None:
     await ensure_recent_backup(settings.database_url, settings.backup_dir, settings.backup_keep)
 
     logging.info(
-        "Запуск бота «%s» (demo_mode=%s)", business.business.name, settings.demo_mode
+        "Запуск бота «%s» (профіль %s, demo_mode=%s)",
+        business.business.name, settings.business_profile, settings.demo_mode,
     )
     scheduler.start()
     try:
@@ -151,7 +156,15 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    setup_logging(BaseAppSettings().log_file)
+    try:
+        setup_logging(BaseAppSettings().log_file)
+    except Exception:
+        # Помилка в .env: шлях до логу беремо напряму зі змінної оточення
+        # (скрипт запуску на Windows її задає), щоб причина потрапила в лог
+        log_file = os.environ.get("LOG_FILE", "").strip()
+        setup_logging(Path(log_file) if log_file else None)
+        logging.exception("Помилка в налаштуваннях (.env)")
+        sys.exit(1)
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

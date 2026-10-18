@@ -1,0 +1,70 @@
+# Профіль «Барбершоп». Усе, що відрізняє цей бізнес від інших: дані, правила,
+# тексти й демо-дані. Обирається в .env: BUSINESS_PROFILE=barber
+# Час пишіть у лапках: "10:00" (без лапок YAML прочитає 10:00 як число).
+
+business:
+  name: "Demo Barber"
+  address: "м. Львів, пл. Ринок, 1"
+  phone: "+380 32 000 00 00"
+  map_url: "https://maps.google.com/?q=площа+Ринок+1,+Львів"
+  instagram: "https://instagram.com/demo.barber"
+
+booking:
+  timezone: "Europe/Kyiv"
+  slot_step_min: 15            # крок слотів, хв
+  horizon_days: 14             # на скільки днів наперед можна записатися
+  min_lead_time_min: 60        # мінімальний час від «зараз» до запису, хв
+  cancel_deadline_hours: 2     # клієнт може скасувати/перенести не пізніше ніж за N год
+
+reminders:
+  before_24h: true
+  before_2h: true
+
+# Тексти з bot/texts.py, які відрізняються для цієї ніші
+texts:
+  SERVICE_ICON: "💈"
+
+# Демо-дані: python -m seed.demo_data і нічне скидання в демо-режимі
+demo:
+  services:
+    - {key: haircut, name: "Чоловіча стрижка", duration_min: 45, price: 500}
+    - {key: beard, name: "Стрижка бороди", duration_min: 30, price: 350}
+    - {key: combo, name: "Комплекс (стрижка + борода)", duration_min: 75, price: 750}
+    - {key: kids, name: "Дитяча стрижка", duration_min: 30, price: 350}
+    - {key: gray, name: "Камуфлювання сивини", duration_min: 30, price: 400}
+
+  masters:
+    - {name: "Олександр", services: [haircut, beard, combo, kids, gray]}
+    - {name: "Дмитро", services: [haircut, beard, combo, kids]}
+    - {name: "Максим", services: [haircut, beard, combo, gray]}
+
+  # Пн–Сб 10:00–20:00, перерва 14:00–15:00
+  schedule:
+    weekdays: [0, 1, 2, 3, 4, 5]
+    start: "10:00"
+    end: "20:00"
+    break_start: "14:00"
+    break_end: "15:00"
+
+  clients:
+    - {name: "Андрій", phone: "+380501112233"}
+    - {name: "Богдан", phone: "+380672223344"}
+    - {name: "Віктор", phone: "+380633334455"}
+    - {name: "Ігор", phone: "+380934445566"}
+    - {name: "Сергій", phone: "+380995556677"}
+
+  # Зайняті слоти на тиждень наперед. Усі вміщаються в робочий день,
+  # не зачіпають перерву й вирівняні по кроку 15 хв.
+  booking_days: 7
+  booking_patterns:
+    - [{time: "10:00", service: haircut}, {time: "11:30", service: combo},
+       {time: "16:00", service: beard}, {time: "18:15", service: haircut}]
+    - [{time: "10:30", service: beard}, {time: "12:00", service: haircut},
+       {time: "15:00", service: combo}, {time: "17:45", service: kids}]
+    - [{time: "11:00", service: haircut}, {time: "13:00", service: beard},
+       {time: "16:30", service: gray}]
+  # Якщо майстер не робить послугу з шаблону — замість неї
+  fallback_service: haircut
+
+  time_off:
+    - {master: "Дмитро", day_offset: 2, start: "10:00", end: "13:00", reason: "Особисті справи"}

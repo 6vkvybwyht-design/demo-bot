@@ -1,4 +1,16 @@
-"""Усі тексти бота. Єдине місце для ребрендингу й правок формулювань."""
+"""Усі тексти бота. Єдине місце для ребрендингу й правок формулювань.
+
+Тексти тут нейтральні — без прив'язки до ніші. Те, що відрізняється між бізнесами
+(емодзі послуг, привітання тощо), перевизначається в профілі бізнесу:
+розділ `texts` у config/profiles/<профіль>.yaml (див. apply_overrides внизу).
+"""
+
+import string
+from typing import Any
+
+# Емодзі послуг (у барбершопі 💈, у манікюрному салоні 💅). Рядки, що його
+# містять, перебудовуються, коли профіль змінює SERVICE_ICON.
+SERVICE_ICON = "📋"
 
 # Кнопки головного меню
 BTN_BOOK = "📅 Записатися"
@@ -69,7 +81,7 @@ BTN_CONFIRM = "✅ Підтвердити"
 CONFIRM = "Перевірте, будь ласка, запис:\n\n{summary}"
 ANY_MASTER_LABEL = "будь-який (призначимо автоматично)"
 SUMMARY = (
-    "💈 Послуга: <b>{service}</b>\n"
+    SERVICE_ICON + " Послуга: <b>{service}</b>\n"
     "👤 Майстер: {master}\n"
     "📅 Дата: {date}\n"
     "🕐 Час: {time}\n"
@@ -135,7 +147,7 @@ ADMIN_NO_ACCESS = "Немає доступу."
 ADMIN_MENU = "⚙️ <b>Адмінка</b>\n\nОберіть розділ:"
 BTN_ADMIN_TODAY = "📅 Сьогодні"
 BTN_ADMIN_WEEK = "🗓 Тиждень"
-BTN_ADMIN_SERVICES = "💈 Послуги"
+BTN_ADMIN_SERVICES = f"{SERVICE_ICON} Послуги"
 BTN_ADMIN_MASTERS = "👤 Майстри"
 BTN_ADMIN_SCHEDULE = "🕐 Графік"
 BTN_ADMIN_TIME_OFF = "⛔ Блокування часу"
@@ -211,11 +223,11 @@ BTN_FORCE_SAVE = "Все одно зберегти"
 BTN_ABORT = "Скасувати"
 
 # Послуги
-ADMIN_SERVICES = "💈 <b>Послуги</b>\n\n🙈 — приховані від клієнтів."
+ADMIN_SERVICES = f"{SERVICE_ICON} <b>Послуги</b>\n\n🙈 — приховані від клієнтів."
 ADMIN_SERVICE_BUTTON = "{hidden}{name} · {duration} хв · {price} грн"
 HIDDEN_MARK = "🙈 "
 BTN_ADD_SERVICE = "➕ Додати послугу"
-ADMIN_SERVICE = "💈 <b>{name}</b>\n⏱ {duration} хв · 💵 {price} грн\nСтатус: {status}"
+ADMIN_SERVICE = SERVICE_ICON + " <b>{name}</b>\n⏱ {duration} хв · 💵 {price} грн\nСтатус: {status}"
 STATUS_VISIBLE = "показується клієнтам"
 STATUS_HIDDEN = "🙈 приховано"
 BTN_EDIT_NAME = "✏️ Назва"
@@ -236,13 +248,13 @@ ADMIN_MASTERS = "👤 <b>Майстри</b>\n\n🙈 — приховані ві�
 BTN_ADD_MASTER = "➕ Додати майстра"
 ADMIN_MASTER = (
     "👤 <b>{name}</b>\nСтатус: {status}\n🔔 Telegram ID: {telegram_id}\n"
-    "💈 Послуги: {services}\n\n🕐 Графік:\n{schedule}"
+    + SERVICE_ICON + " Послуги: {services}\n\n🕐 Графік:\n{schedule}"
 )
 NOT_SET = "не вказано"
 NO_SERVICES_LINKED = "не прив'язано"
 BTN_EDIT_MASTER_NAME = "✏️ Ім'я"
 BTN_EDIT_TELEGRAM_ID = "🔔 Telegram ID"
-BTN_MASTER_SERVICES = "💈 Послуги майстра"
+BTN_MASTER_SERVICES = f"{SERVICE_ICON} Послуги майстра"
 BTN_BACK_TO_MASTERS = "⬅️ До майстрів"
 BTN_BACK_TO_MASTER = "⬅️ До майстра"
 ASK_MASTER_NAME = "Введіть ім'я майстра:"
@@ -251,7 +263,9 @@ ASK_TELEGRAM_ID = (
     "(дізнатися ID можна, наприклад, через @userinfobot), або «-», щоб прибрати:"
 )
 HINT_TELEGRAM_ID = "Потрібне число, наприклад 123456789, або «-»."
-ADMIN_MASTER_SERVICES = "💈 Послуги майстра «{name}»\n\nНатисніть, щоб прив'язати ✅ або відв'язати ▫️:"
+ADMIN_MASTER_SERVICES = (
+    SERVICE_ICON + " Послуги майстра «{name}»\n\nНатисніть, щоб прив'язати ✅ або відв'язати ▫️:"
+)
 LINKED_MARK = "✅ "
 UNLINKED_MARK = "▫️ "
 
@@ -316,3 +330,49 @@ DEMO_NAMES_DISABLED = (
     "У демо зміни назв вимкнені. "
     "У вашому боті ви зможете додавати й редагувати майстрів і послуги тут."
 )
+
+
+# --- Перевизначення з профілю бізнесу -------------------------------------------
+
+_DEFAULTS: dict[str, Any] = {
+    name: value for name, value in globals().items() if name.isupper() and not name.startswith("_")
+}
+# Рядки, побудовані з SERVICE_ICON: при заміні іконки їх перебудовуємо
+_ICON_DERIVED = {
+    name
+    for name, value in _DEFAULTS.items()
+    if name != "SERVICE_ICON" and isinstance(value, str) and SERVICE_ICON in value
+}
+
+
+def _placeholders(template: str) -> set[str]:
+    return {field for _, field, _, _ in string.Formatter().parse(template) if field is not None}
+
+
+def reset() -> None:
+    """Повертає тексти за замовчуванням."""
+    globals().update(_DEFAULTS)
+
+
+def apply_overrides(overrides: dict[str, str]) -> None:
+    """Застосовує тексти профілю поверх текстів за замовчуванням.
+
+    Помилки (невідома назва, інші {підстановки}) — одразу на старті бота,
+    а не тоді, коли клієнт натисне кнопку.
+    """
+    reset()
+    errors = []
+    for name, value in overrides.items():
+        default = _DEFAULTS.get(name)
+        if not isinstance(default, str):
+            errors.append(f"{name}: такого тексту немає в bot/texts.py")
+        elif _placeholders(value) != _placeholders(default):
+            expected = ", ".join(sorted(_placeholders(default))) or "без підстановок"
+            errors.append(f"{name}: потрібні підстановки {{{expected}}}")
+    if errors:
+        raise ValueError("Помилки в розділі texts профілю:\n" + "\n".join(errors))
+
+    icon = overrides.get("SERVICE_ICON", SERVICE_ICON)
+    for name in _ICON_DERIVED:
+        globals()[name] = _DEFAULTS[name].replace(_DEFAULTS["SERVICE_ICON"], icon)
+    globals().update(overrides)

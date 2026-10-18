@@ -1,0 +1,70 @@
+# Профіль «Манікюрний салон». Обирається в .env: BUSINESS_PROFILE=nails
+# Час пишіть у лапках: "09:00" (без лапок YAML прочитає 9:00 як число).
+
+business:
+  name: "Demo Nails"
+  address: "м. Львів, вул. Городоцька, 1"
+  phone: "+380 32 000 00 01"
+  map_url: "https://maps.google.com/?q=вулиця+Городоцька+1,+Львів"
+  instagram: "https://instagram.com/demo.nails"
+
+booking:
+  timezone: "Europe/Kyiv"
+  slot_step_min: 15
+  horizon_days: 14
+  min_lead_time_min: 60
+  cancel_deadline_hours: 2
+
+reminders:
+  before_24h: true
+  before_2h: true
+
+texts:
+  SERVICE_ICON: "💅"
+
+demo:
+  services:
+    - {key: classic, name: "Манікюр класичний", duration_min: 60, price: 350}
+    - {key: gel, name: "Манікюр з покриттям гель-лак", duration_min: 90, price: 550}
+    - {key: extension, name: "Нарощування нігтів", duration_min: 150, price: 900}
+    - {key: correction, name: "Корекція нарощених нігтів", duration_min: 120, price: 700}
+    - {key: pedicure, name: "Педикюр без покриття", duration_min: 60, price: 450}
+    - {key: pedicure_gel, name: "Педикюр з покриттям гель-лак", duration_min: 90, price: 650}
+    - {key: removal, name: "Зняття покриття", duration_min: 20, price: 100}
+
+  masters:
+    - {name: "Олена", services: [classic, gel, extension, correction, pedicure, pedicure_gel, removal]}
+    # Манікюр і нарощування (зняття покриття — частина цих послуг)
+    - {name: "Ірина", services: [classic, gel, extension, correction, removal]}
+    # Педикюр і манікюр
+    - {name: "Марта", services: [classic, gel, pedicure, pedicure_gel, removal]}
+
+  # Пн–Сб 9:00–20:00, перерва 13:00–14:00, Нд вихідний
+  schedule:
+    weekdays: [0, 1, 2, 3, 4, 5]
+    start: "09:00"
+    end: "20:00"
+    break_start: "13:00"
+    break_end: "14:00"
+
+  clients:
+    - {name: "Анна", phone: "+380501112244"}
+    - {name: "Катерина", phone: "+380672223355"}
+    - {name: "Софія", phone: "+380633334466"}
+    - {name: "Марія", phone: "+380934445577"}
+    - {name: "Юлія", phone: "+380995556688"}
+
+  # Зайняті слоти на тиждень наперед. Усі вміщаються в робочий день,
+  # не зачіпають перерву й вирівняні по кроку 15 хв. Якщо майстер не робить
+  # послугу з шаблону, її замінить найдовша з його послуг, що вміщається.
+  booking_days: 7
+  booking_patterns:
+    - [{time: "09:00", service: classic}, {time: "10:30", service: gel},
+       {time: "14:00", service: extension}, {time: "17:00", service: pedicure}]
+    - [{time: "09:30", service: removal}, {time: "10:00", service: extension},
+       {time: "14:30", service: gel}, {time: "18:00", service: pedicure_gel}]
+    - [{time: "11:00", service: classic}, {time: "15:00", service: correction},
+       {time: "18:30", service: gel}]
+
+  time_off:
+    - {master: "Ірина", day_offset: 2, start: "09:00", end: "12:00", reason: "Особисті справи"}
