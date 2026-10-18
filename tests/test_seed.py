@@ -1,47 +1,63 @@
-from datetime import UTC, datetime, time
+"""Seed демо-даних — для кожного профілю бізнесу."""
 
+from datetime import UTC, datetime, timedelta
+
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
+from bot.config import list_profiles, load_business_config, profile_path
 from bot.db.models import Booking, BookingStatus, Client, Master, Service, TimeOff, WorkingHours
-from seed.demo_data import BREAK_END, BREAK_START, DAY_END, DAY_START, reset_demo_data
+from seed.demo_data import reset_demo_data
 
 # Середа; наступні 7 днів захоплюють перехід Києва на зимовий час (25.10.2026)
 NOW = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
+PROFILES = ["barber", "nails"]
+
+
+@pytest.fixture(params=PROFILES)
+def profile(request):
+    return load_business_config(profile_path(request.param))
+
+
+def test_all_profiles_are_tested():
+    assert set(list_profiles()) == set(PROFILES)
 
 
 async def _count(session, model) -> int:
     return await session.scalar(select(func.count()).select_from(model))
 
 
-async def test_seed_counts(session, business):
-    summary = await reset_demo_data(session, business, now=NOW)
+async def test_seed_counts(session, profile):
+    demo = profile.demo
+    summary = await reset_demo_data(session, profile, now=NOW)
     await session.commit()
 
-    assert await _count(session, Service) == summary.services == 5
-    assert await _count(session, Master) == summary.masters == 3
-    assert await _count(session, WorkingHours) == 3 * 6  # Пн–Сб
-    assert await _count(session, Client) == summary.clients
-    assert await _count(session, TimeOff) == summary.time_off == 1
+    assert await _count(session, Service) == summary.services == len(demo.services)
+    assert await _count(session, Master) == summary.masters == len(demo.masters)
+    assert await _count(session, WorkingHours) == len(demo.masters) * len(demo.schedule.weekdays)
+    assert await _count(session, Client) == summary.clients == len(demo.clients)
+    assert await _count(session, TimeOff) == summary.time_off == len(demo.time_off)
     assert await _count(session, Booking) == summary.bookings > 0
 
 
-async def test_seed_is_repeatable(session, business):
-    first = await reset_demo_data(session, business, now=NOW)
+async def test_seed_is_repeatable(session, profile):
+    first = await reset_demo_data(session, profile, now=NOW)
     await session.commit()
-    second = await reset_demo_data(session, business, now=NOW)
+    second = await reset_demo_data(session, profile, now=NOW)
     await session.commit()
 
     assert first == second
     assert await _count(session, Booking) == second.bookings
 
 
-async def test_seed_bookings_are_realistic(session, business):
-    await reset_demo_data(session, business, now=NOW)
+async def test_seed_bookings_are_realistic(session, profile):
+    await reset_demo_data(session, profile, now=NOW)
     await session.commit()
 
-    tz = business.booking.tz
-    step = business.booking.slot_step_min
+    tz = profile.booking.tz
+    step = profile.booking.slot_step_min
+    schedule = profile.demo.schedule
     bookings = (await session.scalars(select(Booking).order_by(Booking.start_dt))).all()
     time_off = (await session.scalars(select(TimeOff))).all()
     # Зв'язки завантажуємо явно: ліниве довантаження в async-сесії не працює
@@ -52,9 +68,9 @@ async def test_seed_bookings_are_realistic(session, business):
     for b in bookings:
         start, end = b.start_dt.astimezone(tz), b.end_dt.astimezone(tz)
         assert start.date() == end.date()
-        assert start.weekday() != 6, "у неділю вихідний"
-        assert DAY_START <= start.time() and end.time() <= DAY_END
-        assert end.time() <= BREAK_START or start.time() >= BREAK_END, "запис у перерву"
+        assert start.weekday() in schedule.weekdays, "запис у вихідний"
+        assert schedule.start <= start.time() and end.time() <= schedule.end
+        assert end.time() <= schedule.break_start or start.time() >= schedule.break_end, "запис у перерву"
         assert start.minute % step == 0
         assert b.service_id in services_by_master[b.master_id]
         assert not any(
@@ -69,7 +85,61 @@ async def test_seed_bookings_are_realistic(session, business):
         for prev, nxt in zip(items, items[1:]):
             assert prev.end_dt <= nxt.start_dt, "записи майстра перетинаються"
 
-    # Після переходу на зимовий час 10:00 за Києвом — це 08:00 UTC, а не 07:00
+    # Після переходу на зимовий час графік — за київським часом, а не зсунутий на годину
     after_dst = [b for b in bookings if b.start_dt.astimezone(tz).date().day == 26]
-    assert any(b.start_dt.astimezone(tz).time() == time(10, 0) for b in after_dst)
-    assert all(b.start_dt.hour >= 8 for b in after_dst)
+    assert after_dst
+    assert min(b.start_dt.astimezone(tz).time() for b in after_dst) >= schedule.start
+
+
+async def test_every_master_gets_bookings(session, profile):
+    await reset_demo_data(session, profile, now=NOW)
+    await session.commit()
+    busy = set((await session.scalars(select(Booking.master_id))).all())
+    assert busy == set((await session.scalars(select(Master.id))).all())
+
+
+async def test_profile_without_demo_section(session, profile):
+    with pytest.raises(ValueError, match="demo"):
+        await reset_demo_data(session, profile.model_copy(update={"demo": None}), now=NOW)
+
+
+async def test_nails_profile_data(session):
+    nails = load_business_config(profile_path("nails"))
+    await reset_demo_data(session, nails, now=NOW)
+    await session.commit()
+
+    services = {s.name: (s.duration_min, s.price) for s in (await session.scalars(select(Service))).all()}
+    assert services == {
+        "Манікюр класичний": (60, 350),
+        "Манікюр з покриттям гель-лак": (90, 550),
+        "Нарощування нігтів": (150, 900),
+        "Корекція нарощених нігтів": (120, 700),
+        "Педикюр без покриття": (60, 450),
+        "Педикюр з покриттям гель-лак": (90, 650),
+        "Зняття покриття": (20, 100),
+    }
+    masters = {
+        m.name: {s.name for s in m.services}
+        for m in await session.scalars(select(Master).options(selectinload(Master.services)))
+    }
+    assert masters["Олена"] == set(services)
+    assert not any("Педикюр" in s for s in masters["Ірина"])
+    assert "Нарощування нігтів" in masters["Ірина"]
+    assert not any(s in masters["Марта"] for s in ("Нарощування нігтів", "Корекція нарощених нігтів"))
+    assert {"Педикюр без покриття", "Манікюр класичний"} <= masters["Марта"]
+
+    hours = (await session.scalars(select(WorkingHours))).all()
+    assert {(h.start_time.hour, h.end_time.hour, h.break_start.hour, h.break_end.hour) for h in hours} == {
+        (9, 20, 13, 14)
+    }
+    assert 6 not in {h.weekday for h in hours}  # неділя — вихідний
+    clients = (await session.scalars(select(Client.name))).all()
+    assert set(clients) == {"Анна", "Катерина", "Софія", "Марія", "Юлія"}
+
+
+async def test_seed_relative_to_today(session, profile):
+    later = NOW + timedelta(days=30)
+    await reset_demo_data(session, profile, now=later)
+    await session.commit()
+    first = await session.scalar(select(func.min(Booking.start_dt)))
+    assert first.astimezone(profile.booking.tz).date() >= later.astimezone(profile.booking.tz).date()

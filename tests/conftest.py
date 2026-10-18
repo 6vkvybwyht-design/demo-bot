@@ -2,6 +2,7 @@ from datetime import time
 
 import pytest
 
+from bot import texts
 from bot.config import DEFAULT_BUSINESS_CONFIG, Settings, load_business_config
 from bot.db.models import Base, Master, Service, WorkingHours
 from bot.db.session import create_engine, create_session_factory
@@ -28,6 +29,13 @@ async def engine(tmp_path):
 async def session(engine):
     async with create_session_factory(engine)() as session:
         yield session
+
+
+@pytest.fixture(autouse=True)
+def _reset_texts():
+    # Тексти профілю застосовуються до модуля texts — повертаємо їх після кожного тесту
+    yield
+    texts.reset()
 
 
 @pytest.fixture(autouse=True)

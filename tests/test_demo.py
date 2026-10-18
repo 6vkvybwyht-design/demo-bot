@@ -23,7 +23,6 @@ from bot.services.demo import (
     reset_demo,
     viewer_for,
 )
-from seed.demo_data import SERVICES
 from tests.conftest import ADMIN_ID, MASTER_TG_ID
 from tests.fake_telegram import TelegramUser
 
@@ -319,7 +318,7 @@ async def test_reset_restores_everything(demo_dp, visitor, engine, business):
     async with factory() as session:
         services = (await session.scalars(select(Service))).all()
         assert {(s.name, s.price, s.is_active) for s in services} == {
-            (name, price, True) for name, _, price in SERVICES.values()
+            (s.name, s.price, True) for s in business.demo.services
         }
         dmytro = await session.scalar(select(Master).where(Master.name == "Дмитро"))
         assert dmytro.is_active
