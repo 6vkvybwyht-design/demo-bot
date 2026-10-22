@@ -55,11 +55,11 @@ def test_invalid_profile_name(monkeypatch, name):
 
 
 def test_missing_profile_lists_available():
-    with pytest.raises(FileNotFoundError, match="Доступні: barber, nails"):
+    with pytest.raises(FileNotFoundError, match="Доступні: barber, groom, nails"):
         profile_path("yoga")
 
 
-@pytest.mark.parametrize("name", ["barber", "nails"])
+@pytest.mark.parametrize("name", ["barber", "groom", "nails"])
 def test_profiles_load_with_demo_and_valid_texts(name):
     business = load_business_config(profile_path(name))
     assert business.demo is not None and business.demo.services
@@ -67,7 +67,7 @@ def test_profiles_load_with_demo_and_valid_texts(name):
 
 
 def test_list_profiles():
-    assert {"barber", "nails"} <= set(list_profiles())
+    assert {"barber", "groom", "nails"} <= set(list_profiles())
 
 
 # --- Тексти -------------------------------------------------------------------

@@ -169,6 +169,24 @@ class Client(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
+class Pet(Base):
+    """Тварина клієнта (для профілів із розділом pets, наприклад грумінг)."""
+
+    __tablename__ = "pets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(
+        ForeignKey("clients.id", ondelete="RESTRICT"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(50))
+    species: Mapped[str] = mapped_column(String(30))  # ключ виду з профілю
+    breed: Mapped[str] = mapped_column(String(50))
+    size: Mapped[str] = mapped_column(String(30))  # ключ розміру з профілю
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+    client: Mapped[Client] = relationship()
+
+
 class Booking(Base):
     __tablename__ = "bookings"
     __table_args__ = (
@@ -202,10 +220,24 @@ class Booking(Base):
     reminded_2h: Mapped[bool] = mapped_column(default=False, server_default="0")
     # Коли клієнт натиснув «Буду» в нагадуванні (None — не підтверджував)
     client_confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Тварина (лише для профілів із тваринами)
+    pet_id: Mapped[int | None] = mapped_column(ForeignKey("pets.id", ondelete="RESTRICT"))
+    # Ціна на момент запису: залежить від розміру тварини й не змінюється разом із прайсом.
+    # None — старі записи, ціна береться з послуги
+    price: Mapped[int | None] = mapped_column(Integer)
 
     client: Mapped[Client] = relationship()
     master: Mapped[Master] = relationship()
     service: Mapped[Service] = relationship()
+    pet: Mapped[Pet | None] = relationship()
+
+    @property
+    def duration_min(self) -> int:
+        return int((self.end_dt - self.start_dt).total_seconds() // 60)
+
+    @property
+    def display_price(self) -> int:
+        return self.price if self.price is not None else self.service.price
 
 
 class FsmState(Base):

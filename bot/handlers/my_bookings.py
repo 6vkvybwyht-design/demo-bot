@@ -21,19 +21,14 @@ from bot.services.booking import (
     ChangeDeadlinePassedError,
     SlotUnavailableError,
 )
-from bot.services.formatting import booking_moved_text, booking_summary, fmt_when
+from bot.services.formatting import booking_moved_text, fmt_when, summary_of
 from bot.states import RescheduleStates
 
 router = Router(name="my_bookings")
 
 
 def _summary(booking: Booking, business: BusinessConfig) -> str:
-    return booking_summary(
-        service=booking.service,
-        master_name=booking.master.name,
-        start=booking.start_dt,
-        tz=business.booking.tz,
-    )
+    return summary_of(booking, business)
 
 
 def _card(
@@ -188,6 +183,8 @@ async def start_move(
             "service_id": booking.service_id,
             "master_id": booking.master_id,
             "old_start": booking.start_dt.isoformat(),
+            # Тривалість — самого запису (могла залежати від розміру тварини)
+            "duration_min": booking.duration_min,
         }
     )
     await show_dates(callback, state, session, business)
@@ -226,9 +223,7 @@ async def show_move_confirm(
         return
     tz = business.booking.tz
     new_start = datetime.fromisoformat(data["start"])
-    new_summary = booking_summary(
-        service=booking.service, master_name=booking.master.name, start=new_start, tz=tz
-    )
+    new_summary = summary_of(booking, business, start=new_start)
     await state.set_state(RescheduleStates.confirm)
     await callback.message.edit_text(
         texts.MOVE_CONFIRM.format(

@@ -214,9 +214,11 @@ async def show_services(event: Event, session: AsyncSession) -> None:
     await _render(event, texts.ADMIN_SERVICES, kb.services_kb(await admin.list_services(session)))
 
 
-async def show_service(event: Event, service_id: int, session: AsyncSession) -> None:
+async def show_service(
+    event: Event, service_id: int, session: AsyncSession, business: BusinessConfig
+) -> None:
     service = await session.get(Service, service_id, populate_existing=True)
-    await _render(event, admin_service_text(service), kb.service_kb(service))
+    await _render(event, admin_service_text(service, business.pets), kb.service_kb(service))
 
 
 @router.callback_query(AdminCb.filter(F.action == "svcs"))
@@ -226,8 +228,10 @@ async def services(callback: CallbackQuery, state: FSMContext, session: AsyncSes
 
 
 @router.callback_query(AdminCb.filter(F.action == "svc"))
-async def service(callback: CallbackQuery, callback_data: AdminCb, session: AsyncSession) -> None:
-    await show_service(callback, callback_data.id, session)
+async def service(
+    callback: CallbackQuery, callback_data: AdminCb, session: AsyncSession, business: BusinessConfig
+) -> None:
+    await show_service(callback, callback_data.id, session, business)
 
 
 @router.callback_query(AdminCb.filter(F.action == "svc_hide"))
@@ -248,15 +252,15 @@ async def hide_service(
         )
         return
     await admin.update_service(session, callback_data.id, is_active=False)
-    await show_service(callback, callback_data.id, session)
+    await show_service(callback, callback_data.id, session, business)
 
 
 @router.callback_query(AdminCb.filter(F.action.in_({"svc_hide_force", "svc_show"})))
 async def set_service_visibility(
-    callback: CallbackQuery, callback_data: AdminCb, session: AsyncSession
+    callback: CallbackQuery, callback_data: AdminCb, session: AsyncSession, business: BusinessConfig
 ) -> None:
     await admin.update_service(session, callback_data.id, is_active=callback_data.action == "svc_show")
-    await show_service(callback, callback_data.id, session)
+    await show_service(callback, callback_data.id, session, business)
 
 
 # --- Майстри ------------------------------------------------------------------
@@ -661,7 +665,7 @@ async def _handle_input(
             session, data["name"], data["duration"], admin.parse_int(text, 0, 1_000_000)
         )
         await state.clear()
-        await show_service(message, svc.id, session)
+        await show_service(message, svc.id, session, business)
 
     # Зміна послуги
     elif kind in {"svc_name", "svc_duration_min", "svc_price"}:
@@ -673,7 +677,7 @@ async def _handle_input(
         }[field]()
         await admin.update_service(session, data["id"], **{field: value})
         await state.clear()
-        await show_service(message, data["id"], session)
+        await show_service(message, data["id"], session, business)
 
     # Майстри
     elif kind == "mst_new_name":

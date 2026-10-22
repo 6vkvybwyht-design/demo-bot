@@ -13,12 +13,15 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot import texts
-from bot.db.models import Master, Service
-from bot.config import BusinessInfo
+from bot.db.models import Master, Pet, Service
+from bot.config import BusinessInfo, PetsConfig
 from bot.keyboards.callbacks import (
     ANY_MASTER,
+    NEW_PET,
     DateCb,
     MasterCb,
+    PetCb,
+    PetOptionCb,
     MyBookingCb,
     NavCb,
     NoopCb,
@@ -26,6 +29,7 @@ from bot.keyboards.callbacks import (
     TimeCb,
 )
 from bot.services.formatting import fmt_date, fmt_time, service_button
+from bot.services.pets import Offer
 from bot.services.slots import DayPart, group_by_day_part
 
 
@@ -38,10 +42,16 @@ def back_kb() -> InlineKeyboardMarkup:
     return _with_back(InlineKeyboardBuilder()).as_markup()
 
 
-def services_kb(services: Sequence[Service]) -> InlineKeyboardMarkup:
+def services_kb(
+    services: Sequence[Service], offers: dict[int, Offer] | None = None
+) -> InlineKeyboardMarkup:
+    """Послуги; `offers` — тривалість і ціна для розміру тварини (id послуги → пропозиція)."""
     builder = InlineKeyboardBuilder()
     for service in services:
-        builder.button(text=service_button(service), callback_data=ServiceCb(service_id=service.id))
+        builder.button(
+            text=service_button(service, offers.get(service.id) if offers else None),
+            callback_data=ServiceCb(service_id=service.id),
+        )
     _with_back(builder).adjust(1)
     return builder.as_markup()
 
@@ -155,4 +165,36 @@ def reminder_kb(booking_id: int, *, can_cancel: bool) -> InlineKeyboardMarkup:
             text=texts.BTN_CANCEL_BOOKING,
             callback_data=MyBookingCb(action="cancel", booking_id=booking_id),
         )
+    return builder.as_markup()
+
+
+def pets_kb(pets: Sequence[Pet], config: PetsConfig) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for pet in pets:
+        builder.button(
+            text=texts.PET_BUTTON.format(name=pet.name, size=config.size_label(pet.size)),
+            callback_data=PetCb(pet_id=pet.id),
+        )
+    builder.button(text=texts.BTN_NEW_PET, callback_data=PetCb(pet_id=NEW_PET))
+    _with_back(builder).adjust(1)
+    return builder.as_markup()
+
+
+def pet_species_kb(config: PetsConfig) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for option in config.species:
+        builder.button(text=option.label, callback_data=PetOptionCb(kind="species", key=option.key))
+    _with_back(builder).adjust(len(config.species), 1)
+    return builder.as_markup()
+
+
+def pet_size_kb(config: PetsConfig) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for option in config.sizes:
+        label = (
+            texts.PET_SIZE_BUTTON.format(label=option.label, hint=option.hint)
+            if option.hint else option.label
+        )
+        builder.button(text=label, callback_data=PetOptionCb(kind="size", key=option.key))
+    _with_back(builder).adjust(1)
     return builder.as_markup()

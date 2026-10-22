@@ -26,7 +26,10 @@ def is_admin(user_id: int, settings: Settings) -> bool:
 
 def _with_details(query):
     return query.options(
-        selectinload(Booking.client), selectinload(Booking.master), selectinload(Booking.service)
+        selectinload(Booking.client),
+        selectinload(Booking.master),
+        selectinload(Booking.service),
+        selectinload(Booking.pet),
     )
 
 

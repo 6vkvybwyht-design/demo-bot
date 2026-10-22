@@ -18,7 +18,7 @@ from bot import texts
 from bot.config import BusinessConfig
 from bot.db.models import Booking
 from bot.services.demo import FULL_ACCESS, Viewer, is_demo_client
-from bot.services.formatting import booking_summary, fmt_when
+from bot.services.formatting import fmt_when, summary_of
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,7 @@ async def load_booking(session: AsyncSession, booking_id: int) -> Booking:
             selectinload(Booking.client),
             selectinload(Booking.master),
             selectinload(Booking.service),
+            selectinload(Booking.pet),
         )
         .execution_options(populate_existing=True)
     )
@@ -71,12 +72,7 @@ def staff_recipients(
 
 
 def staff_details(booking: Booking, business: BusinessConfig, viewer: Viewer = FULL_ACCESS) -> str:
-    summary = booking_summary(
-        service=booking.service,
-        master_name=booking.master.name,
-        start=booking.start_dt,
-        tz=business.booking.tz,
-    )
+    summary = summary_of(booking, business)
     return texts.STAFF_DETAILS.format(
         summary=summary,
         client=html.quote(viewer.client_name(booking.client)),
@@ -115,12 +111,7 @@ async def notify_client_cancelled_by_admin(
     bot: Bot, session: AsyncSession, *, booking_id: int, business: BusinessConfig
 ) -> bool:
     booking = await load_booking(session, booking_id)
-    summary = booking_summary(
-        service=booking.service,
-        master_name=booking.master.name,
-        start=booking.start_dt,
-        tz=business.booking.tz,
-    )
+    summary = summary_of(booking, business)
     text = texts.CLIENT_CANCELLED_BY_ADMIN.format(
         summary=summary, phone=html.quote(business.business.phone)
     )

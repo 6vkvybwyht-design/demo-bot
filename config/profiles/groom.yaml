@@ -1,0 +1,119 @@
+# Профіль «Грумінг-салон». Обирається в .env: BUSINESS_PROFILE=groom
+# Запис із твариною: клієнт вказує кличку, вид, породу й розмір, а тривалість
+# і ціна послуги залежать від розміру (розділ pets.prices).
+# Час пишіть у лапках: "09:00" (без лапок YAML прочитає 9:00 як число).
+
+business:
+  name: "Demo Groom"
+  address: "м. Львів, вул. Шевченка, 1"
+  phone: "+380 32 000 00 02"
+  map_url: "https://maps.google.com/?q=вулиця+Шевченка+1,+Львів"
+  instagram: "https://instagram.com/demo.groom"
+
+booking:
+  timezone: "Europe/Kyiv"
+  slot_step_min: 15
+  horizon_days: 14
+  min_lead_time_min: 60
+  cancel_deadline_hours: 2
+
+# Власнику тварини нагадуємо лише за день до візиту
+reminders:
+  before_24h: true
+  before_2h: false
+
+texts:
+  SERVICE_ICON: "🐩"
+
+pets:
+  species:
+    # label — кнопка, name — як писати в записі й сповіщеннях
+    - {key: dog, label: "🐕 Собака", name: "собака"}
+    - {key: cat, label: "🐈 Кіт", name: "кіт"}
+  sizes:
+    - {key: mini, label: "Міні", hint: "до 5 кг"}
+    - {key: small, label: "Малий", hint: "5–10 кг"}
+    - {key: medium, label: "Середній", hint: "10–25 кг"}
+    - {key: large, label: "Великий", hint: "понад 25 кг"}
+  # Прайс: назва послуги (як у списку послуг) → розмір → тривалість у хв і ціна в грн.
+  # Якщо розміру в рядку немає, для тварин цього розміру послуга недоступна.
+  prices:
+    "Комплексний грумінг":
+      mini: {duration_min: 90, price: 700}
+      small: {duration_min: 120, price: 900}
+      medium: {duration_min: 150, price: 1200}
+      large: {duration_min: 180, price: 1600}
+    "Стрижка":
+      mini: {duration_min: 60, price: 500}
+      small: {duration_min: 75, price: 650}
+      medium: {duration_min: 90, price: 850}
+      large: {duration_min: 120, price: 1100}
+    "Купання":
+      mini: {duration_min: 30, price: 300}
+      small: {duration_min: 45, price: 400}
+      medium: {duration_min: 60, price: 550}
+      large: {duration_min: 75, price: 700}
+    "Гігієнічна стрижка":
+      mini: {duration_min: 30, price: 250}
+      small: {duration_min: 30, price: 300}
+      medium: {duration_min: 45, price: 350}
+      large: {duration_min: 45, price: 400}
+    "Підстригання кігтів":
+      mini: {duration_min: 15, price: 150}
+      small: {duration_min: 15, price: 150}
+      medium: {duration_min: 15, price: 200}
+      large: {duration_min: 20, price: 250}
+    "Вичісування":
+      mini: {duration_min: 30, price: 350}
+      small: {duration_min: 45, price: 450}
+      medium: {duration_min: 60, price: 600}
+      large: {duration_min: 90, price: 800}
+
+demo:
+  # Тривалість і ціна тут — базові (для розміру «міні»); фактичні беруться з pets.prices
+  services:
+    - {key: complex, name: "Комплексний грумінг", duration_min: 90, price: 700}
+    - {key: haircut, name: "Стрижка", duration_min: 60, price: 500}
+    - {key: bath, name: "Купання", duration_min: 30, price: 300}
+    - {key: hygiene, name: "Гігієнічна стрижка", duration_min: 30, price: 250}
+    - {key: claws, name: "Підстригання кігтів", duration_min: 15, price: 150}
+    - {key: brushing, name: "Вичісування", duration_min: 30, price: 350}
+
+  masters:
+    - {name: "Наталія", services: [complex, haircut, bath, hygiene, claws, brushing]}
+    - {name: "Андрій", services: [complex, haircut, bath, brushing]}
+    - {name: "Оксана", services: [bath, hygiene, claws, brushing]}
+
+  # Пн–Сб 9:00–19:00, перерва 13:00–14:00, Нд вихідний
+  schedule:
+    weekdays: [0, 1, 2, 3, 4, 5]
+    start: "09:00"
+    end: "19:00"
+    break_start: "13:00"
+    break_end: "14:00"
+
+  clients:
+    - {name: "Олег", phone: "+380501112255",
+       pet: {name: "Рекс", species: dog, breed: "лабрадор", size: large}}
+    - {name: "Ірина", phone: "+380672223366",
+       pet: {name: "Мурка", species: cat, breed: "британська", size: small}}
+    - {name: "Тарас", phone: "+380633334477",
+       pet: {name: "Бобік", species: dog, breed: "джек-рассел-тер'єр", size: small}}
+    - {name: "Віра", phone: "+380934445588",
+       pet: {name: "Лакі", species: dog, breed: "шпіц", size: mini}}
+    - {name: "Максим", phone: "+380995556699",
+       pet: {name: "Граф", species: dog, breed: "бігль", size: medium}}
+
+  # Зайняті слоти на тиждень наперед. Тривалість залежить від розміру тварини,
+  # тож запис, що не вмістився (великий пес), seed пропускає.
+  booking_days: 7
+  booking_patterns:
+    - [{time: "09:00", service: complex}, {time: "12:30", service: claws},
+       {time: "14:00", service: bath}, {time: "16:00", service: haircut}]
+    - [{time: "09:30", service: bath}, {time: "11:00", service: hygiene},
+       {time: "14:30", service: complex}, {time: "17:45", service: brushing}]
+    - [{time: "10:00", service: haircut}, {time: "15:00", service: brushing},
+       {time: "17:00", service: bath}]
+
+  time_off:
+    - {master: "Андрій", day_offset: 2, start: "09:00", end: "12:00", reason: "Особисті справи"}

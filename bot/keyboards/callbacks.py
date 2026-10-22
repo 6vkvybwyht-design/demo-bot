@@ -7,6 +7,18 @@ class ServiceCb(CallbackData, prefix="svc"):
     service_id: int
 
 
+NEW_PET = 0  # pet_id для «Інша тварина»
+
+
+class PetCb(CallbackData, prefix="pet"):
+    pet_id: int
+
+
+class PetOptionCb(CallbackData, prefix="petopt"):
+    kind: str  # species / size
+    key: str
+
+
 class MasterCb(CallbackData, prefix="mst"):
     master_id: int
 
