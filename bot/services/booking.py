@@ -108,8 +108,13 @@ async def create_booking(
     rules: BookingRules,
     now: datetime,
     reminders: Reminders = Reminders(),
+    duration_min: int | None = None,
+    price: int | None = None,
+    pet_id: int | None = None,
 ) -> Booking:
     """Створює запис, повторно перевіряючи слот у межах однієї транзакції.
+
+    `duration_min` і `price` — для тварини конкретного розміру (за замовчуванням з послуги).
 
     `master_id=None` — «будь-який майстер»: призначаємо вільного майстра
     з найменшою кількістю записів у цей день.
@@ -129,7 +134,7 @@ async def create_booking(
                 raise SlotUnavailableError
             await _lock_masters(session, candidates)
             free = await slots.get_free_slots_any_master(
-                session, service=service, day=day, rules=rules, now=now
+                session, service=service, day=day, rules=rules, now=now, duration_min=duration_min
             )
             if start not in free:
                 raise SlotUnavailableError
@@ -139,7 +144,8 @@ async def create_booking(
         else:
             await _lock_masters(session, [master_id])
             if not await slots.is_slot_available(
-                session, master_id=master_id, service=service, start=start, rules=rules, now=now
+                session, master_id=master_id, service=service, start=start, rules=rules, now=now,
+                duration_min=duration_min,
             ):
                 raise SlotUnavailableError
 
@@ -148,8 +154,10 @@ async def create_booking(
             master_id=master_id,
             service_id=service.id,
             start_dt=start,
-            end_dt=start + timedelta(minutes=service.duration_min),
+            end_dt=start + timedelta(minutes=duration_min or service.duration_min),
             created_at=now,
+            price=price if price is not None else service.price,
+            pet_id=pet_id,
         )
         _plan_reminders(booking, now, reminders)
         session.add(booking)
@@ -175,7 +183,7 @@ async def get_upcoming_bookings(
             Booking.status == BookingStatus.CONFIRMED,
             Booking.start_dt > now,
         )
-        .options(selectinload(Booking.service), selectinload(Booking.master))
+        .options(selectinload(Booking.service), selectinload(Booking.master), selectinload(Booking.pet))
         .order_by(Booking.start_dt)
     )
     return list(result.all())
@@ -199,7 +207,7 @@ async def get_own_booking(
             Booking.status == BookingStatus.CONFIRMED,
             Booking.start_dt > now,
         )
-        .options(selectinload(Booking.service), selectinload(Booking.master))
+        .options(selectinload(Booking.service), selectinload(Booking.master), selectinload(Booking.pet))
         .execution_options(populate_existing=True)
     )
     if booking is None:
@@ -244,6 +252,8 @@ async def reschedule_booking(
         await _lock_masters(session, [booking.master_id])
         # Після блокування перечитуємо запис: його могли скасувати паралельно
         booking = await get_own_booking(session, booking_id, telegram_id, now)
+        # Тривалість — самого запису (вона могла залежати від розміру тварини)
+        duration = booking.duration_min
         if not await slots.is_slot_available(
             session,
             master_id=booking.master_id,
@@ -252,11 +262,12 @@ async def reschedule_booking(
             rules=rules,
             now=now,
             exclude_booking_id=booking.id,
+            duration_min=duration,
         ):
             raise SlotUnavailableError
 
         booking.start_dt = new_start
-        booking.end_dt = new_start + timedelta(minutes=booking.service.duration_min)
+        booking.end_dt = new_start + timedelta(minutes=duration)
         # Новий час — нагадування плануються заново, підтвердження клієнта скидається
         _plan_reminders(booking, now, reminders)
         booking.client_confirmed_at = None

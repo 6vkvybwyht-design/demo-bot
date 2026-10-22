@@ -7,10 +7,11 @@ from zoneinfo import ZoneInfo
 from aiogram import html
 
 from bot import texts
-from bot.config import BusinessInfo
-from bot.db.models import Booking, BookingStatus, Master, Service, TimeOff, WorkingHours
+from bot.config import BusinessConfig, BusinessInfo, PetsConfig
+from bot.db.models import Booking, BookingStatus, Master, Pet, Service, TimeOff, WorkingHours
 from bot.services.booking import PlannedReminders
 from bot.services.demo import FULL_ACCESS, Viewer
+from bot.services.pets import Offer, pet_description
 
 
 def fmt_time(dt: datetime, tz: ZoneInfo) -> str:
@@ -21,15 +22,19 @@ def fmt_date(day: date) -> str:
     return f"{texts.WEEKDAYS_SHORT[day.weekday()]}, {day:%d.%m}"
 
 
-def service_button(service: Service) -> str:
+def service_button(service: Service, offer: Offer | None = None) -> str:
+    """Кнопка послуги; `offer` — тривалість і ціна для розміру тварини."""
     return texts.SERVICE_BUTTON.format(
-        name=service.name, duration=service.duration_min, price=service.price
+        name=service.name,
+        duration=offer.duration_min if offer else service.duration_min,
+        price=offer.price if offer else service.price,
     )
 
 
 def progress_text(
     prompt: str,
     *,
+    pet_name: str | None = None,
     service: Service | None = None,
     master_name: str | None = None,
     any_master: bool = False,
@@ -37,8 +42,10 @@ def progress_text(
     start: datetime | None = None,
     tz: ZoneInfo | None = None,
 ) -> str:
-    """Підказка кроку з наростаючим підсумком над нею: послуга · майстер · дата · час."""
+    """Підказка кроку з наростаючим підсумком над нею: (тварина ·) послуга · майстер · дата · час."""
     parts = []
+    if pet_name:
+        parts.append(html.quote(pet_name))
     if service is not None:
         parts.append(html.quote(service.name))
     if any_master:
@@ -91,16 +98,53 @@ def contacts_text(info: BusinessInfo) -> str:
 
 
 def booking_summary(
-    *, service: Service, master_name: str | None, start: datetime, tz: ZoneInfo
+    *,
+    service: Service,
+    master_name: str | None,
+    start: datetime,
+    tz: ZoneInfo,
+    duration_min: int | None = None,
+    price: int | None = None,
+    pet: Pet | None = None,
+    pets: PetsConfig | None = None,
 ) -> str:
-    """Деталі запису. `master_name=None` — «будь-який майстер»."""
-    return texts.SUMMARY.format(
+    """Деталі запису. `master_name=None` — «будь-який майстер».
+
+    `duration_min` і `price` — якщо вони не з послуги (розмір тварини).
+    """
+    text = texts.SUMMARY.format(
         service=html.quote(service.name),
         master=html.quote(master_name) if master_name else texts.ANY_MASTER_LABEL,
         date=fmt_date(start.astimezone(tz).date()),
         time=fmt_time(start, tz),
-        duration=service.duration_min,
-        price=service.price,
+        duration=duration_min or service.duration_min,
+        price=price if price is not None else service.price,
+    )
+    if pet is not None:
+        text = pet_line(pet, pets) + text
+    return text
+
+
+def pet_line(pet: Pet, pets: PetsConfig | None) -> str:
+    return texts.SUMMARY_PET.format(
+        name=html.quote(pet.name), description=html.quote(pet_description(pet, pets))
+    )
+
+
+def summary_of(booking: Booking, business: BusinessConfig, start: datetime | None = None) -> str:
+    """Деталі наявного запису: тривалість і ціна — із запису, тварина — якщо є.
+
+    `start` — інший час (екран перенесення).
+    """
+    return booking_summary(
+        service=booking.service,
+        master_name=booking.master.name,
+        start=start or booking.start_dt,
+        tz=business.booking.tz,
+        duration_min=booking.duration_min,
+        price=booking.display_price,
+        pet=booking.pet,
+        pets=business.pets,
     )
 
 
@@ -125,6 +169,9 @@ def admin_day_text(
         if booking.master.name != current_master:
             current_master = booking.master.name
             lines.append(texts.ADMIN_DAY_MASTER.format(master=html.quote(current_master)))
+        client = viewer.client_name(booking.client)
+        if booking.pet is not None:
+            client = texts.ADMIN_DAY_PET.format(client=client, pet=booking.pet.name)
         lines.append(
             texts.ADMIN_DAY_LINE.format(
                 icon=(
@@ -134,7 +181,7 @@ def admin_day_text(
                 ),
                 time=fmt_time(booking.start_dt, tz),
                 service=html.quote(booking.service.name),
-                client=html.quote(viewer.client_name(booking.client)),
+                client=html.quote(client),
             )
         )
     return texts.ADMIN_DAY.format(date=fmt_date(day), count=len(bookings), lines="\n".join(lines))
@@ -178,13 +225,26 @@ def schedule_text(working_hours: Sequence[WorkingHours]) -> str:
     return "\n".join(schedule_line(wd, by_day.get(wd)) for wd in range(7))
 
 
-def admin_service_text(service: Service) -> str:
-    return texts.ADMIN_SERVICE.format(
+def admin_service_text(service: Service, pets: PetsConfig | None = None) -> str:
+    text = texts.ADMIN_SERVICE.format(
         name=html.quote(service.name),
         duration=service.duration_min,
         price=service.price,
         status=texts.STATUS_VISIBLE if service.is_active else texts.STATUS_HIDDEN,
     )
+    if pets is None:
+        return text
+    row = pets.prices.get(service.name)
+    if row is None:
+        return text + texts.ADMIN_SERVICE_NOT_IN_PRICES
+    lines = "\n".join(
+        texts.ADMIN_SERVICE_PRICE_LINE.format(
+            size=size.label, duration=row[size.key].duration_min, price=row[size.key].price
+        )
+        for size in pets.sizes
+        if size.key in row
+    )
+    return text + texts.ADMIN_SERVICE_PRICES.format(lines=lines)
 
 
 def admin_master_text(master: Master) -> str:

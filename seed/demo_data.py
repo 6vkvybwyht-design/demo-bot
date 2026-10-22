@@ -23,12 +23,14 @@ from bot.db.models import (
     FsmState,
     Master,
     MasterService,
+    Pet,
     Service,
     TimeOff,
     WorkingHours,
 )
 from bot.db.session import create_engine, create_session_factory
 from bot.services.demo import DEMO_CLIENT_TG_BASE  # вигадані Telegram ID демо-клієнтів
+from bot.services.pets import offer_for
 
 @dataclass
 class SeedSummary:
@@ -42,12 +44,25 @@ class SeedSummary:
 async def clear_all(session: AsyncSession) -> None:
     # Порядок важливий через зовнішні ключі
     # FsmState — незавершені діалоги посилаються на дані, яких після скидання не буде
-    for model in (FsmState, Booking, TimeOff, WorkingHours, MasterService, Client, Master, Service):
+    for model in (
+        FsmState, Booking, Pet, TimeOff, WorkingHours, MasterService, Client, Master, Service
+    ):
         await session.execute(delete(model))
 
 
 def _local_dt(day: date, at: time, business: BusinessConfig) -> datetime:
     return datetime.combine(day, at, tzinfo=business.booking.tz).astimezone(UTC)
+
+
+def _fits(start: datetime, end: datetime, day: date, schedule, business: BusinessConfig) -> bool:
+    """Запис у межах робочого дня й не заходить на перерву."""
+    if start < _local_dt(day, schedule.start, business) or end > _local_dt(day, schedule.end, business):
+        return False
+    if schedule.break_start is None:
+        return True
+    br_start = _local_dt(day, schedule.break_start, business)
+    br_end = _local_dt(day, schedule.break_end, business)
+    return end <= br_start or start >= br_end
 
 
 def _service_for(
@@ -103,6 +118,17 @@ async def reset_demo_data(
         for i, c in enumerate(demo.clients, start=1)
     ]
     session.add_all(clients)
+    await session.flush()  # id клієнтів потрібні для тварин
+
+    # Тварини демо-клієнтів (профілі з розділом pets)
+    pets: dict[int, Pet] = {}
+    for client, item in zip(clients, demo.clients):
+        if item.pet is not None:
+            pets[client.id] = Pet(
+                client_id=client.id, name=item.pet.name, species=item.pet.species,
+                breed=item.pet.breed, size=item.pet.size,
+            )
+    session.add_all(pets.values())
 
     time_off = [
         TimeOff(
@@ -116,23 +142,36 @@ async def reset_demo_data(
     session.add_all(time_off)
 
     bookings: list[Booking] = []
+    busy: dict[str, list[tuple[datetime, datetime]]] = {name: [] for name in masters}
     patterns = demo.booking_patterns
     for offset in range(demo.booking_days):
         day = today + timedelta(days=offset)
         if day.weekday() not in schedule.weekdays:
             continue
-        for m_idx, master in enumerate(masters.values()):
+        for m_idx, (master_name, master) in enumerate(masters.items()):
             for slot in patterns[(offset + m_idx) % len(patterns)] if patterns else []:
                 service = _service_for(master, services[slot.service], services, demo)
                 if service is None:
                     continue
-                start = _local_dt(day, slot.time, business)
-                end = start + timedelta(minutes=service.duration_min)
-                if any(t.master is master and start < t.end_dt and t.start_dt < end for t in time_off):
+                client = clients[len(bookings) % len(clients)]
+                pet = pets.get(client.id)
+                # Тривалість і ціна — за розміром тварини, якщо вона є
+                offer = offer_for(service, pet.size if pet else None, business.pets)
+                if offer is None:
                     continue
+                start = _local_dt(day, slot.time, business)
+                end = start + timedelta(minutes=offer.duration_min)
+                if not _fits(start, end, day, schedule, business) or any(
+                    start < b_end and b_start < end for b_start, b_end in busy[master_name]
+                ) or any(t.master is master and start < t.end_dt and t.start_dt < end for t in time_off):
+                    # Довша за шаблон послуга (великий пес) не вмістилася — пропускаємо
+                    continue
+                busy[master_name].append((start, end))
                 bookings.append(
                     Booking(
-                        client=clients[len(bookings) % len(clients)],
+                        client=client,
+                        pet=pet,
+                        price=offer.price,
                         master=master,
                         service=service,
                         start_dt=start,

@@ -11,18 +11,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot import texts
 from bot.config import BusinessConfig, Settings
 from bot.db import repo
-from bot.db.models import Master, Service, utcnow
+from bot.db.models import Master, Pet, Service, utcnow
 from bot.keyboards import booking as kb
-from bot.keyboards.callbacks import ANY_MASTER, DateCb, MasterCb, NavCb, NoopCb, ServiceCb, TimeCb
+from bot.keyboards.callbacks import (
+    ANY_MASTER,
+    NEW_PET,
+    DateCb,
+    MasterCb,
+    NavCb,
+    NoopCb,
+    PetCb,
+    PetOptionCb,
+    ServiceCb,
+    TimeCb,
+)
 from bot.keyboards.main_menu import main_menu_kb
 from bot.services import booking as booking_service
 from bot.services import notifications, slots
+from bot.services import pets as pets_service
 from bot.services.booking import SlotUnavailableError
 from bot.services.formatting import (
     booking_done_text,
     booking_summary,
     contacts_text,
     progress_text,
+    summary_of,
 )
 from bot.services.phone import normalize_contact_phone, parse_ua_phone
 from bot.states import BookingStates, RescheduleStates
@@ -91,6 +104,7 @@ async def _progress(
     master = await session.get(Master, master_id) if "master" in done and master_id else None
     return progress_text(
         prompt,
+        pet_name=data.get("pet_name"),
         service=await session.get(Service, data["service_id"]) if "service" in done else None,
         master_name=master.name if master else None,
         any_master="master" in done and master_id is None,
@@ -108,8 +122,21 @@ async def show_services(
         await state.clear()
         await _render(event, texts.NO_SERVICES.format(phone=business.business.phone))
         return
+    data = await state.get_data()
+    offers = None
+    if business.pets is not None and "pet_size" in data:
+        # Тривалість і ціна — для розміру тварини; недоступні для нього послуги не показуємо
+        offers = {s.id: pets_service.offer_for(s, data["pet_size"], business.pets) for s in services}
+        services = [s for s in services if offers[s.id] is not None]
+        if not services:
+            await state.set_state(BookingStates.service)
+            await _render(
+                event, texts.NO_SERVICES_FOR_PET.format(phone=business.business.phone), kb.back_kb()
+            )
+            return
     await state.set_state(BookingStates.service)
-    await _render(event, texts.CHOOSE_SERVICE, kb.services_kb(services))
+    text = await _progress(texts.CHOOSE_SERVICE, state, session, business, upto="service")
+    await _render(event, text, kb.services_kb(services, offers))
 
 
 async def show_masters(
@@ -133,7 +160,7 @@ async def show_dates(
     rules = business.booking
     dates = await slots.get_available_dates(
         session, service=service, master_id=master_id, rules=rules, now=utcnow(),
-        exclude_booking_id=moving_id,
+        exclude_booking_id=moving_id, duration_min=(await state.get_data()).get("duration_min"),
     )
     await state.set_state(RescheduleStates.date if moving_id else BookingStates.date)
     if not dates:
@@ -152,8 +179,11 @@ async def _free_starts(
     day: date,
     business: BusinessConfig,
     exclude_booking_id: int | None,
+    duration_min: int | None,
 ) -> list[datetime]:
-    common = dict(service=service, day=day, rules=business.booking, now=utcnow())
+    common = dict(
+        service=service, day=day, rules=business.booking, now=utcnow(), duration_min=duration_min
+    )
     if master_id is None:
         return list(await slots.get_free_slots_any_master(session, **common))
     return await slots.get_free_slots(
@@ -170,8 +200,11 @@ async def show_times(
 ) -> None:
     service, master_id = await _load_choice(session, state)
     moving_id = await _moving_booking_id(state)
-    day = date.fromisoformat((await state.get_data())["day"])
-    starts = await _free_starts(session, service, master_id, day, business, moving_id)
+    data = await state.get_data()
+    day = date.fromisoformat(data["day"])
+    starts = await _free_starts(
+        session, service, master_id, day, business, moving_id, data.get("duration_min")
+    )
     if not starts:
         # Поки клієнт обирав, вільний час на цю дату закінчився
         await show_dates(event, state, session, business)
@@ -188,13 +221,19 @@ async def show_confirm(
     event: Event, state: FSMContext, session: AsyncSession, business: BusinessConfig
 ) -> None:
     service, master_id = await _load_choice(session, state)
-    start = datetime.fromisoformat((await state.get_data())["start"])
+    data = await state.get_data()
+    start = datetime.fromisoformat(data["start"])
     master = await session.get(Master, master_id) if master_id else None
+    pet = await session.get(Pet, data["pet_id"]) if data.get("pet_id") else None
     summary = booking_summary(
         service=service,
         master_name=master.name if master else None,
         start=start,
         tz=business.booking.tz,
+        duration_min=data.get("duration_min"),
+        price=data.get("price"),
+        pet=pet,
+        pets=business.pets,
     )
     await state.set_state(BookingStates.confirm)
     await _render(event, texts.CONFIRM.format(summary=summary), kb.confirm_kb())
@@ -208,7 +247,10 @@ async def start_booking(
     message: Message, state: FSMContext, session: AsyncSession, business: BusinessConfig
 ) -> None:
     await state.clear()
-    await show_services(message, state, session, business)
+    if business.pets is not None:
+        await show_pets(message, state, session, business)
+    else:
+        await show_services(message, state, session, business)
 
 
 @router.callback_query(BookingStates.service, ServiceCb.filter())
@@ -220,6 +262,12 @@ async def pick_service(
     if service is None or not service.is_active:
         await show_services(callback, state, session, business)
         return
+    if business.pets is not None:
+        offer = pets_service.offer_for(service, (await state.get_data()).get("pet_size"), business.pets)
+        if offer is None:  # послуга недоступна для цього розміру (стара кнопка)
+            await show_services(callback, state, session, business)
+            return
+        await state.update_data(duration_min=offer.duration_min, price=offer.price)
     await state.update_data(service_id=service.id)
     await show_masters(callback, state, session, business)
 
@@ -323,20 +371,21 @@ async def confirm_booking(
     client = await booking_service.get_or_create_client(
         session, callback.from_user.id, callback.from_user.full_name
     )
+    data = await state.get_data()
     try:
         booking = await booking_service.create_booking(
             session, client=client, service=service, master_id=master_id,
             start=start, rules=business.booking, now=utcnow(), reminders=business.reminders,
+            duration_min=data.get("duration_min"), price=data.get("price"),
+            pet_id=data.get("pet_id"),
         )
     except SlotUnavailableError:
         await show_times(callback, state, session, business, notice=texts.SLOT_TAKEN)
         return
 
     await state.clear()
-    master = await session.get(Master, booking.master_id)
-    summary = booking_summary(
-        service=service, master_name=master.name, start=booking.start_dt, tz=business.booking.tz
-    )
+    booking = await notifications.load_booking(session, booking.id)
+    summary = summary_of(booking, business)
     reminders = booking_service.planned_reminders(
         booking.start_dt, booking.created_at, business.reminders
     )
@@ -359,11 +408,168 @@ async def noop(callback: CallbackQuery) -> None:
     pass
 
 
+# --- Тварина (профілі з розділом pets) ----------------------------------------
+
+
+def _not_menu_button(text: str) -> bool:
+    """Текст кнопки головного меню — не кличка й не порода (меню видно під час введення)."""
+    return text not in {texts.BTN_BOOK, texts.BTN_MY_BOOKINGS, texts.BTN_CONTACTS, texts.BTN_DEMO_OWNER}
+
+
+async def show_pets(
+    event: Event, state: FSMContext, session: AsyncSession, business: BusinessConfig
+) -> None:
+    """Збережені тварини клієнта або одразу введення нової."""
+    pets = await pets_service.client_pets(session, event.from_user.id)
+    await state.set_data({})
+    if not pets:
+        await ask_pet_name(event, state)
+        return
+    await state.set_state(BookingStates.pet)
+    await _render(event, texts.CHOOSE_PET, kb.pets_kb(pets, business.pets))
+
+
+async def ask_pet_name(event: Event, state: FSMContext) -> None:
+    await state.set_state(BookingStates.pet_name)
+    await _render(event, texts.ASK_PET_NAME, kb.back_kb())
+
+
+async def _ask_species(event: Event, state: FSMContext, business: BusinessConfig) -> None:
+    name = (await state.get_data())["new_pet_name"]
+    await state.set_state(BookingStates.pet_species)
+    await _render(
+        event, texts.ASK_PET_SPECIES.format(name=html.quote(name)), kb.pet_species_kb(business.pets)
+    )
+
+
+async def _ask_breed(event: Event, state: FSMContext) -> None:
+    await state.set_state(BookingStates.pet_breed)
+    await _render(event, texts.ASK_PET_BREED, kb.back_kb())
+
+
+async def _ask_size(event: Event, state: FSMContext, business: BusinessConfig) -> None:
+    await state.set_state(BookingStates.pet_size)
+    await _render(event, texts.ASK_PET_SIZE, kb.pet_size_kb(business.pets))
+
+
+async def _use_pet(
+    event: Event, pet: Pet, state: FSMContext, session: AsyncSession, business: BusinessConfig
+) -> None:
+    await state.set_data({"pet_id": pet.id, "pet_size": pet.size, "pet_name": pet.name})
+    await show_services(event, state, session, business)
+
+
+@router.callback_query(BookingStates.pet, PetCb.filter())
+async def pick_pet(
+    callback: CallbackQuery, callback_data: PetCb, state: FSMContext,
+    session: AsyncSession, business: BusinessConfig,
+) -> None:
+    if callback_data.pet_id == NEW_PET:
+        await ask_pet_name(callback, state)
+        return
+    pet = await pets_service.get_own_pet(session, callback_data.pet_id, callback.from_user.id)
+    if pet is None:
+        await show_pets(callback, state, session, business)
+        return
+    await _use_pet(callback, pet, state, session, business)
+
+
+@router.message(BookingStates.pet_name, F.text.func(_not_menu_button))
+async def got_pet_name(message: Message, state: FSMContext, business: BusinessConfig) -> None:
+    try:
+        name = pets_service.parse_pet_name(message.text)
+    except pets_service.PetInputError:
+        await message.answer(texts.INVALID_PET_NAME, reply_markup=kb.back_kb())
+        return
+    await state.update_data(new_pet_name=name)
+    await _ask_species(message, state, business)
+
+
+@router.callback_query(BookingStates.pet_species, PetOptionCb.filter(F.kind == "species"))
+async def got_pet_species(
+    callback: CallbackQuery, callback_data: PetOptionCb, state: FSMContext, business: BusinessConfig
+) -> None:
+    if callback_data.key not in {s.key for s in business.pets.species}:
+        await _ask_species(callback, state, business)
+        return
+    await state.update_data(new_pet_species=callback_data.key)
+    await _ask_breed(callback, state)
+
+
+@router.message(BookingStates.pet_breed, F.text.func(_not_menu_button))
+async def got_pet_breed(message: Message, state: FSMContext, business: BusinessConfig) -> None:
+    try:
+        breed = pets_service.parse_pet_breed(message.text)
+    except pets_service.PetInputError:
+        await message.answer(texts.INVALID_PET_BREED, reply_markup=kb.back_kb())
+        return
+    await state.update_data(new_pet_breed=breed)
+    await _ask_size(message, state, business)
+
+
+@router.callback_query(BookingStates.pet_size, PetOptionCb.filter(F.kind == "size"))
+async def got_pet_size(
+    callback: CallbackQuery, callback_data: PetOptionCb, state: FSMContext,
+    session: AsyncSession, business: BusinessConfig,
+) -> None:
+    if callback_data.key not in {s.key for s in business.pets.sizes}:
+        await _ask_size(callback, state, business)
+        return
+    data = await state.get_data()
+    client = await booking_service.get_or_create_client(
+        session, callback.from_user.id, callback.from_user.full_name
+    )
+    pet = await pets_service.create_pet(
+        session, client, name=data["new_pet_name"], species=data["new_pet_species"],
+        breed=data["new_pet_breed"], size=callback_data.key,
+    )
+    await _use_pet(callback, pet, state, session, business)
+
+
+@router.callback_query(BookingStates.pet, NavCb.filter(F.action == "back"))
+async def back_from_pet(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await callback.message.edit_text(texts.BACK_TO_MENU)
+
+
+@router.callback_query(BookingStates.pet_name, NavCb.filter(F.action == "back"))
+async def back_from_pet_name(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession, business: BusinessConfig
+) -> None:
+    if await pets_service.client_pets(session, callback.from_user.id):
+        await show_pets(callback, state, session, business)
+        return
+    await state.clear()
+    await callback.message.edit_text(texts.BACK_TO_MENU)
+
+
+@router.callback_query(BookingStates.pet_species, NavCb.filter(F.action == "back"))
+async def back_from_pet_species(callback: CallbackQuery, state: FSMContext) -> None:
+    await ask_pet_name(callback, state)
+
+
+@router.callback_query(BookingStates.pet_breed, NavCb.filter(F.action == "back"))
+async def back_from_pet_breed(
+    callback: CallbackQuery, state: FSMContext, business: BusinessConfig
+) -> None:
+    await _ask_species(callback, state, business)
+
+
+@router.callback_query(BookingStates.pet_size, NavCb.filter(F.action == "back"))
+async def back_from_pet_size(callback: CallbackQuery, state: FSMContext) -> None:
+    await _ask_breed(callback, state)
+
+
 # --- Назад --------------------------------------------------------------------
 
 
 @router.callback_query(BookingStates.service, NavCb.filter(F.action == "back"))
-async def back_from_service(callback: CallbackQuery, state: FSMContext) -> None:
+async def back_from_service(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession, business: BusinessConfig
+) -> None:
+    if business.pets is not None:
+        await show_pets(callback, state, session, business)
+        return
     await state.clear()
     await callback.message.edit_text(texts.BACK_TO_MENU)
 

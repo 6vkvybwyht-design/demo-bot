@@ -32,6 +32,21 @@ BACK_TO_MENU = "Добре, повертаємось до меню."
 STALE_BUTTON = "Ця кнопка вже неактуальна. Почніть заново з меню."
 WEEKDAYS_SHORT = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд")
 
+# Запис із твариною (профілі з розділом pets): кличка → вид → порода → розмір
+CHOOSE_PET = "Для кого запис?"
+PET_BUTTON = "🐾 {name} · {size}"
+BTN_NEW_PET = "➕ Інша тварина"
+ASK_PET_NAME = "Як звати вашого улюбленця? Напишіть кличку повідомленням."
+ASK_PET_SPECIES = "<b>{name}</b> — це:"
+ASK_PET_BREED = "Яка порода? Напишіть повідомленням (для безпородних — «безпородний»)."
+ASK_PET_SIZE = "Оберіть розмір — від нього залежать тривалість і ціна послуг:"
+PET_SIZE_BUTTON = "{label} · {hint}"
+INVALID_PET_NAME = "Кличка — від 1 до 30 символів. Напишіть ще раз:"
+INVALID_PET_BREED = "Порода — від 1 до 50 символів. Напишіть ще раз:"
+NO_SERVICES_FOR_PET = (
+    "На жаль, для тварин такого розміру послуг немає. Зателефонуйте нам: {phone}"
+)
+
 # Запис: вибір послуги, майстра, дати й часу
 CHOOSE_SERVICE = "Оберіть послугу:"
 SERVICE_BUTTON = "{name} · {duration} хв · {price} грн"
@@ -88,6 +103,7 @@ SUMMARY = (
     "⏱ Тривалість: {duration} хв\n"
     "💵 Вартість: {price} грн"
 )
+SUMMARY_PET = "🐾 Тварина: <b>{name}</b> ({description})\n"
 BOOKING_DONE = "✅ Ви записані!\n\n{summary}\n\n📍 {address}\n\n{after}"
 # Після запису. Нагадування залежать від конфігу й того, скільки часу до візиту
 REMINDERS_BOTH = "Ми нагадаємо за день і за 2 години."
@@ -228,6 +244,16 @@ ADMIN_SERVICE_BUTTON = "{hidden}{name} · {duration} хв · {price} грн"
 HIDDEN_MARK = "🙈 "
 BTN_ADD_SERVICE = "➕ Додати послугу"
 ADMIN_SERVICE = SERVICE_ICON + " <b>{name}</b>\n⏱ {duration} хв · 💵 {price} грн\nСтатус: {status}"
+ADMIN_SERVICE_PRICES = (
+    "\n\n🐾 <b>Ціни за розміром тварини</b> (з профілю бізнесу):\n{lines}\n"
+    "<i>Тривалість і ціна вище — базові, для послуг без прайсу.</i>"
+)
+ADMIN_SERVICE_PRICE_LINE = "• {size}: {duration} хв · {price} грн"
+ADMIN_SERVICE_NOT_IN_PRICES = (
+    "\n\n⚠️ Цієї послуги немає в прайсі профілю — для всіх розмірів тварин "
+    "діють тривалість і ціна вище."
+)
+ADMIN_DAY_PET = "{client} · 🐾 {pet}"
 STATUS_VISIBLE = "показується клієнтам"
 STATUS_HIDDEN = "🙈 приховано"
 BTN_EDIT_NAME = "✏️ Назва"

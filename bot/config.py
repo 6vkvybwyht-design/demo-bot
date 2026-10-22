@@ -159,9 +159,17 @@ class DemoSchedule(BaseModel):
         return self
 
 
+class DemoPet(BaseModel):
+    name: str
+    species: str  # ключ виду з pets.species
+    breed: str
+    size: str  # ключ розміру з pets.sizes
+
+
 class DemoClient(BaseModel):
     name: str
     phone: str
+    pet: DemoPet | None = None  # для профілів із тваринами
 
 
 class DemoBooking(BaseModel):
@@ -214,13 +222,84 @@ class DemoData(BaseModel):
         return next(s for s in self.services if s.key == key)
 
 
+class PetOption(BaseModel):
+    key: str
+    label: str  # підпис кнопки, можна з емодзі: «🐕 Собака»
+    name: str | None = None  # у тексті запису: «собака» (за замовчуванням — label малими)
+    hint: str | None = None  # пояснення, наприклад «до 5 кг»
+
+    @property
+    def text_name(self) -> str:
+        return self.name or self.label.lower()
+
+
+class PetOffer(BaseModel):
+    duration_min: int = Field(gt=0)
+    price: int = Field(ge=0)
+
+
+class PetsConfig(BaseModel):
+    """Запис із твариною: види, розміри й прайс «послуга → розмір → тривалість і ціна».
+
+    Прайс прив'язаний до послуг за назвою. Послуга без рядка в прайсі має однакові
+    тривалість і ціну для всіх розмірів (з адмінки); якщо в рядку немає розміру —
+    для тварин цього розміру послуга недоступна.
+    """
+
+    species: list[PetOption]
+    sizes: list[PetOption]
+    prices: dict[str, dict[str, PetOffer]] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check(self) -> "PetsConfig":
+        if not self.species or not self.sizes:
+            raise ValueError("pets: потрібні species і sizes")
+        size_keys = {s.key for s in self.sizes}
+        for service, row in self.prices.items():
+            if unknown := set(row) - size_keys:
+                raise ValueError(f"pets.prices «{service}»: невідомі розміри: {', '.join(sorted(unknown))}")
+        return self
+
+    def species_label(self, key: str) -> str:
+        return next((s.label for s in self.species if s.key == key), key)
+
+    def species_name(self, key: str) -> str:
+        return next((s.text_name for s in self.species if s.key == key), key)
+
+    def size_label(self, key: str) -> str:
+        return next((s.label for s in self.sizes if s.key == key), key)
+
+    def size_name(self, key: str) -> str:
+        return next((s.text_name for s in self.sizes if s.key == key), key)
+
+
 class BusinessConfig(BaseModel):
     business: BusinessInfo
     booking: BookingRules = Field(default_factory=BookingRules)
     reminders: Reminders = Field(default_factory=Reminders)
     # Перевизначення текстів із bot/texts.py: {НАЗВА_КОНСТАНТИ: текст}
     texts: dict[str, str] = Field(default_factory=dict)
+    # Запис із твариною (грумінг тощо); None — звичайний запис без тварини
+    pets: PetsConfig | None = None
     demo: DemoData | None = None
+
+    @model_validator(mode="after")
+    def _check_demo_pets(self) -> "BusinessConfig":
+        if self.demo is None:
+            return self
+        demo_pets = [c.pet for c in self.demo.clients if c.pet is not None]
+        if self.pets is None:
+            if demo_pets:
+                raise ValueError("demo.clients: тварини вказані, а розділу pets у профілі немає")
+            return self
+        if len(demo_pets) != len(self.demo.clients):
+            raise ValueError("demo.clients: у профілі з тваринами кожному клієнту потрібна тварина")
+        species = {s.key for s in self.pets.species}
+        sizes = {s.key for s in self.pets.sizes}
+        for pet in demo_pets:
+            if pet.species not in species or pet.size not in sizes:
+                raise ValueError(f"demo.clients: тварина «{pet.name}» — невідомий вид або розмір")
+        return self
 
 
 def list_profiles() -> list[str]:

@@ -216,8 +216,12 @@ async def get_free_slots(
     rules: BookingRules,
     now: datetime,
     exclude_booking_id: int | None = None,
+    duration_min: int | None = None,
 ) -> list[datetime]:
-    """Вільні слоти конкретного майстра на місцеву дату."""
+    """Вільні слоти конкретного майстра на місцеву дату.
+
+    `duration_min` — якщо тривалість не з послуги (розмір тварини, перенесення запису).
+    """
     if not await _master_does_service(session, master_id, service.id):
         return []
     master_day = await _load_master_day(session, master_id, day, rules.tz, exclude_booking_id)
@@ -225,7 +229,7 @@ async def get_free_slots(
         day=day,
         schedule=master_day.schedule,
         busy=master_day.busy,
-        duration_min=service.duration_min,
+        duration_min=duration_min or service.duration_min,
         rules=rules,
         now=now,
     )
@@ -238,6 +242,7 @@ async def get_free_slots_any_master(
     day: date,
     rules: BookingRules,
     now: datetime,
+    duration_min: int | None = None,
 ) -> dict[datetime, list[int]]:
     """«Будь-який майстер»: об'єднання слотів. Ключ — початок слоту, значення — id вільних майстрів."""
     slots: dict[datetime, list[int]] = {}
@@ -247,7 +252,7 @@ async def get_free_slots_any_master(
             day=day,
             schedule=master_day.schedule,
             busy=master_day.busy,
-            duration_min=service.duration_min,
+            duration_min=duration_min or service.duration_min,
             rules=rules,
             now=now,
         ):
@@ -279,6 +284,7 @@ async def get_available_dates(
     rules: BookingRules,
     now: datetime,
     exclude_booking_id: int | None = None,
+    duration_min: int | None = None,
 ) -> list[date]:
     """Дати в межах горизонту запису, на які є хоча б один вільний слот.
 
@@ -291,7 +297,8 @@ async def get_available_dates(
         if master_id is None:
             has_slots = bool(
                 await get_free_slots_any_master(
-                    session, service=service, day=day, rules=rules, now=now
+                    session, service=service, day=day, rules=rules, now=now,
+                    duration_min=duration_min,
                 )
             )
         else:
@@ -304,6 +311,7 @@ async def get_available_dates(
                     rules=rules,
                     now=now,
                     exclude_booking_id=exclude_booking_id,
+                    duration_min=duration_min,
                 )
             )
         if has_slots:
@@ -320,6 +328,7 @@ async def is_slot_available(
     rules: BookingRules,
     now: datetime,
     exclude_booking_id: int | None = None,
+    duration_min: int | None = None,
 ) -> bool:
     """Повторна перевірка слоту перед підтвердженням запису (захист від подвійного запису)."""
     day = start.astimezone(rules.tz).date()
@@ -331,5 +340,6 @@ async def is_slot_available(
         rules=rules,
         now=now,
         exclude_booking_id=exclude_booking_id,
+        duration_min=duration_min,
     )
     return start.astimezone(UTC) in slots

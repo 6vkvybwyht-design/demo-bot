@@ -21,7 +21,7 @@ from bot.config import BusinessConfig, Reminders
 from bot.db.models import Booking, BookingStatus, utcnow
 from bot.keyboards.booking import reminder_kb
 from bot.services.booking import can_client_change
-from bot.services.formatting import booking_summary, fmt_when
+from bot.services.formatting import fmt_when, summary_of
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,10 @@ async def pending_bookings(session: AsyncSession, now: datetime) -> list[Booking
             or_(Booking.reminded_24h.is_(False), Booking.reminded_2h.is_(False)),
         )
         .options(
-            selectinload(Booking.client), selectinload(Booking.master), selectinload(Booking.service)
+            selectinload(Booking.client),
+            selectinload(Booking.master),
+            selectinload(Booking.service),
+            selectinload(Booking.pet),
         )
         .order_by(Booking.start_dt)
     )
@@ -89,9 +92,7 @@ def reminder_text(booking: Booking, business: BusinessConfig, *, can_cancel: boo
     tz = business.booking.tz
     text = texts.REMINDER.format(
         when=fmt_when(booking.start_dt, tz),
-        summary=booking_summary(
-            service=booking.service, master_name=booking.master.name, start=booking.start_dt, tz=tz
-        ),
+        summary=summary_of(booking, business),
         address=html.quote(business.business.address),
     )
     if not can_cancel:

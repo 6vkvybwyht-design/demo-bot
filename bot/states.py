@@ -2,6 +2,11 @@ from aiogram.fsm.state import State, StatesGroup
 
 
 class BookingStates(StatesGroup):
+    pet = State()  # вибір збереженої тварини
+    pet_name = State()
+    pet_species = State()
+    pet_breed = State()
+    pet_size = State()
     service = State()
     master = State()
     date = State()
