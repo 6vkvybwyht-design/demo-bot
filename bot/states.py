@@ -6,8 +6,9 @@ class BookingStates(StatesGroup):
     pet_name = State()
     pet_species = State()
     pet_breed = State()
-    pet_size = State()
+    pet_weight = State()
     service = State()
+    addons = State()  # додаткові послуги
     master = State()
     date = State()
     time = State()

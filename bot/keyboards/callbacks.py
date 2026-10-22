@@ -15,8 +15,12 @@ class PetCb(CallbackData, prefix="pet"):
 
 
 class PetOptionCb(CallbackData, prefix="petopt"):
-    kind: str  # species / size
+    kind: str  # species / breed / weight
     key: str
+
+
+class AddonCb(CallbackData, prefix="addon"):
+    service_id: int
 
 
 class MasterCb(CallbackData, prefix="mst"):

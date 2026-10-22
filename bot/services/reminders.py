@@ -14,7 +14,7 @@ from aiogram import Bot, html
 from aiogram.exceptions import TelegramAPIError
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm import selectinload
+from bot.db.repo import booking_details
 
 from bot import texts
 from bot.config import BusinessConfig, Reminders
@@ -76,12 +76,7 @@ async def pending_bookings(session: AsyncSession, now: datetime) -> list[Booking
             Booking.start_dt <= now + BEFORE_24H,
             or_(Booking.reminded_24h.is_(False), Booking.reminded_2h.is_(False)),
         )
-        .options(
-            selectinload(Booking.client),
-            selectinload(Booking.master),
-            selectinload(Booking.service),
-            selectinload(Booking.pet),
-        )
+        .options(*booking_details())
         .order_by(Booking.start_dt)
     )
     return list(result.all())

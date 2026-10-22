@@ -162,8 +162,8 @@ class DemoSchedule(BaseModel):
 class DemoPet(BaseModel):
     name: str
     species: str  # ключ виду з pets.species
-    breed: str
-    size: str  # ключ розміру з pets.sizes
+    breed: str | None = None  # ключ породи або «mixed» (інша порода / метис)
+    weight: str | None = None  # ключ ваги, якщо порода її потребує
 
 
 class DemoClient(BaseModel):
@@ -222,55 +222,147 @@ class DemoData(BaseModel):
         return next(s for s in self.services if s.key == key)
 
 
-class PetOption(BaseModel):
+class PetWeight(BaseModel):
+    key: str  # «4», «16+» — частина шляху категорії
+    label: str  # «до 4 кг»
+
+
+class PetBreed(BaseModel):
     key: str
-    label: str  # підпис кнопки, можна з емодзі: «🐕 Собака»
-    name: str | None = None  # у тексті запису: «собака» (за замовчуванням — label малими)
-    hint: str | None = None  # пояснення, наприклад «до 5 кг»
-
-    @property
-    def text_name(self) -> str:
-        return self.name or self.label.lower()
+    name: str  # «Шпіц» — кнопка й опис
+    # Якщо ціна породи залежить від ваги — ваги для неї (інакше вагу не питаємо)
+    weights: list[PetWeight] = Field(default_factory=list)
 
 
-class PetOffer(BaseModel):
-    duration_min: int = Field(gt=0)
+class PetSpecies(BaseModel):
+    key: str
+    label: str  # кнопка: «🐕 Собака»
+    name: str  # у тексті: «собака»
+    breeds: list[PetBreed] = Field(default_factory=list)  # популярні породи
+    other_label: str | None = None  # «Інша порода / метис» — тоді питаємо вагу
+    weights: list[PetWeight] = Field(default_factory=list)  # ваги для «іншої породи»
+
+
+# Ключ «іншої породи» в шляху категорії: dog/mixed/12
+MIXED = "mixed"
+
+
+class PriceEntry(BaseModel):
+    model_config = {"populate_by_name": True}
+
     price: int = Field(ge=0)
+    price_from: bool = Field(default=False, alias="from")  # «від X грн»
+    duration_min: int = Field(gt=0)
+
+
+class PetServicePrices(BaseModel):
+    """Прайс однієї послуги: шлях категорії (або його початок) → ціна й тривалість."""
+
+    addon: bool = False  # додаткова послуга: обирається на додачу до основної
+    prices: dict[str, PriceEntry]
 
 
 class PetsConfig(BaseModel):
-    """Запис із твариною: види, розміри й прайс «послуга → розмір → тривалість і ціна».
+    """Запис із твариною: ціна й тривалість залежать від виду, породи й ваги.
 
-    Прайс прив'язаний до послуг за назвою. Послуга без рядка в прайсі має однакові
-    тривалість і ціну для всіх розмірів (з адмінки); якщо в рядку немає розміру —
-    для тварин цього розміру послуга недоступна.
+    Кожна тварина має «категорію прайсу» — шлях вид/порода/вага: dog/spitz/4,
+    dog/mixed/12 (інша порода / метис), cat/mainecoon, rabbit. У прайсі ціну можна
+    задати для будь-якого початку шляху (dog — для всіх собак); береться найточніша.
+    Прайс прив'язаний до послуг за назвою. Послуга без прайсу — однакова для всіх
+    (з адмінки); послуга з прайсом, де немає категорії тварини, — для неї недоступна.
     """
 
-    species: list[PetOption]
-    sizes: list[PetOption]
-    prices: dict[str, dict[str, PetOffer]] = Field(default_factory=dict)
+    species: list[PetSpecies]
+    services: dict[str, PetServicePrices] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _check(self) -> "PetsConfig":
-        if not self.species or not self.sizes:
-            raise ValueError("pets: потрібні species і sizes")
-        size_keys = {s.key for s in self.sizes}
-        for service, row in self.prices.items():
-            if unknown := set(row) - size_keys:
-                raise ValueError(f"pets.prices «{service}»: невідомі розміри: {', '.join(sorted(unknown))}")
+        if not self.species:
+            raise ValueError("pets.species: потрібен хоча б один вид")
+        for sp in self.species:
+            if sp.other_label and not sp.weights:
+                raise ValueError(f"pets.species {sp.key}: для «{sp.other_label}» потрібні weights")
+            if any(b.key == MIXED for b in sp.breeds):
+                raise ValueError(f"pets.species {sp.key}: ключ породи «{MIXED}» зарезервовано")
+        prefixes = {p for path in self.categories() for p in _prefixes(path)}
+        for name, service in self.services.items():
+            if unknown := set(service.prices) - prefixes:
+                raise ValueError(f"pets.services «{name}»: невідомі категорії: {', '.join(sorted(unknown))}")
         return self
 
-    def species_label(self, key: str) -> str:
-        return next((s.label for s in self.species if s.key == key), key)
+    # --- Категорії ---
 
-    def species_name(self, key: str) -> str:
-        return next((s.text_name for s in self.species if s.key == key), key)
+    def species_by_key(self, key: str) -> PetSpecies | None:
+        return next((s for s in self.species if s.key == key), None)
 
-    def size_label(self, key: str) -> str:
-        return next((s.label for s in self.sizes if s.key == key), key)
+    def categories(self) -> list[str]:
+        """Усі можливі категорії тварин (повні шляхи)."""
+        result = []
+        for sp in self.species:
+            if not sp.breeds and not sp.other_label:
+                result.append(sp.key)
+            for breed in sp.breeds:
+                if breed.weights:
+                    result += [f"{sp.key}/{breed.key}/{w.key}" for w in breed.weights]
+                else:
+                    result.append(f"{sp.key}/{breed.key}")
+            if sp.other_label:
+                result += [f"{sp.key}/{MIXED}/{w.key}" for w in sp.weights]
+        return result
 
-    def size_name(self, key: str) -> str:
-        return next((s.text_name for s in self.sizes if s.key == key), key)
+    def category_path(self, species: str, breed: str | None = None, weight: str | None = None) -> str:
+        """Шлях категорії; ValueError, якщо такої комбінації немає."""
+        path = "/".join(part for part in (species, breed, weight) if part)
+        if path not in self.categories():
+            raise ValueError(f"невідома категорія тварини: {path}")
+        return path
+
+    def weights_for(self, species: str, breed: str) -> list[PetWeight]:
+        """Ваги, які треба запитати для породи (або «іншої породи»)."""
+        sp = self.species_by_key(species)
+        if sp is None:
+            return []
+        if breed == MIXED:
+            return sp.weights
+        found = next((b for b in sp.breeds if b.key == breed), None)
+        return found.weights if found else []
+
+    def describe(self, path: str, with_species: bool = True) -> str:
+        """«собака, шпіц, до 4 кг»; без виду — «шпіц, до 4 кг»; кролик — «кролик»."""
+        parts = path.split("/")
+        sp = self.species_by_key(parts[0])
+        if sp is None:
+            return path
+        words = [sp.name] if with_species or len(parts) == 1 else []
+        if len(parts) > 1:
+            if parts[1] == MIXED:
+                words.append((sp.other_label or MIXED).lower())
+            else:
+                breed = next((b for b in sp.breeds if b.key == parts[1]), None)
+                words.append(breed.name.lower() if breed else parts[1])
+        if len(parts) > 2:
+            weights = self.weights_for(parts[0], parts[1])
+            words.append(next((w.label for w in weights if w.key == parts[2]), parts[2]))
+        return ", ".join(words)
+
+    def price_for(self, service_name: str, path: str) -> PriceEntry | None:
+        """Найточніша ціна для категорії: dog/spitz/4 → dog/spitz → dog."""
+        service = self.services.get(service_name)
+        if service is None:
+            return None
+        for prefix in reversed(_prefixes(path)):
+            if prefix in service.prices:
+                return service.prices[prefix]
+        return None
+
+    def is_addon(self, service_name: str) -> bool:
+        service = self.services.get(service_name)
+        return service is not None and service.addon
+
+
+def _prefixes(path: str) -> list[str]:
+    parts = path.split("/")
+    return ["/".join(parts[: i + 1]) for i in range(len(parts))]
 
 
 class BusinessConfig(BaseModel):
@@ -294,11 +386,11 @@ class BusinessConfig(BaseModel):
             return self
         if len(demo_pets) != len(self.demo.clients):
             raise ValueError("demo.clients: у профілі з тваринами кожному клієнту потрібна тварина")
-        species = {s.key for s in self.pets.species}
-        sizes = {s.key for s in self.pets.sizes}
         for pet in demo_pets:
-            if pet.species not in species or pet.size not in sizes:
-                raise ValueError(f"demo.clients: тварина «{pet.name}» — невідомий вид або розмір")
+            try:
+                self.pets.category_path(pet.species, pet.breed, pet.weight)
+            except ValueError as exc:
+                raise ValueError(f"demo.clients: тварина «{pet.name}» — {exc}") from exc
         return self
 
 

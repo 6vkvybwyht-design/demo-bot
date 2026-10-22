@@ -22,12 +22,17 @@ def fmt_date(day: date) -> str:
     return f"{texts.WEEKDAYS_SHORT[day.weekday()]}, {day:%d.%m}"
 
 
+def fmt_price(price: int, price_from: bool = False) -> str:
+    """«1300» або «від 1300» (грн додає шаблон)."""
+    return texts.PRICE_FROM.format(price=price) if price_from else str(price)
+
+
 def service_button(service: Service, offer: Offer | None = None) -> str:
-    """Кнопка послуги; `offer` — тривалість і ціна для розміру тварини."""
+    """Кнопка послуги; `offer` — тривалість і ціна для конкретної тварини."""
+    if offer is None:
+        offer = Offer(service.duration_min, service.price)
     return texts.SERVICE_BUTTON.format(
-        name=service.name,
-        duration=offer.duration_min if offer else service.duration_min,
-        price=offer.price if offer else service.price,
+        name=service.name, duration=offer.duration_min, price=fmt_price(offer.price, offer.price_from)
     )
 
 
@@ -107,10 +112,13 @@ def booking_summary(
     price: int | None = None,
     pet: Pet | None = None,
     pets: PetsConfig | None = None,
+    price_from: bool = False,
+    addon_names: Sequence[str] = (),
 ) -> str:
     """Деталі запису. `master_name=None` — «будь-який майстер».
 
-    `duration_min` і `price` — якщо вони не з послуги (розмір тварини).
+    `duration_min` і `price` — разом із додатковими послугами й для конкретної тварини,
+    якщо вони не з послуги. `price_from` — ціна «від», з приміткою про огляд майстром.
     """
     text = texts.SUMMARY.format(
         service=html.quote(service.name),
@@ -118,10 +126,14 @@ def booking_summary(
         date=fmt_date(start.astimezone(tz).date()),
         time=fmt_time(start, tz),
         duration=duration_min or service.duration_min,
-        price=price if price is not None else service.price,
+        price=fmt_price(price if price is not None else service.price, price_from),
     )
     if pet is not None:
         text = pet_line(pet, pets) + text
+    if addon_names:
+        text += texts.SUMMARY_ADDONS.format(names=html.quote(", ".join(addon_names)))
+    if price_from:
+        text += texts.PRICE_FROM_NOTE
     return text
 
 
@@ -145,6 +157,8 @@ def summary_of(booking: Booking, business: BusinessConfig, start: datetime | Non
         price=booking.display_price,
         pet=booking.pet,
         pets=business.pets,
+        price_from=booking.price_from,
+        addon_names=[addon.service.name for addon in booking.addons],
     )
 
 
@@ -234,17 +248,26 @@ def admin_service_text(service: Service, pets: PetsConfig | None = None) -> str:
     )
     if pets is None:
         return text
-    row = pets.prices.get(service.name)
-    if row is None:
+    prices = pets.services.get(service.name)
+    if prices is None:
         return text + texts.ADMIN_SERVICE_NOT_IN_PRICES
+
+    def category(path: str) -> str:
+        # «dog» у прайсі — ціна для всіх собак
+        if "/" not in path:
+            return texts.ADMIN_SERVICE_ALL_OF_SPECIES.format(species=pets.describe(path))
+        return pets.describe(path)
+
     lines = "\n".join(
         texts.ADMIN_SERVICE_PRICE_LINE.format(
-            size=size.label, duration=row[size.key].duration_min, price=row[size.key].price
+            category=html.quote(category(path)),
+            duration=entry.duration_min,
+            price=fmt_price(entry.price, entry.price_from),
         )
-        for size in pets.sizes
-        if size.key in row
+        for path, entry in prices.prices.items()
     )
-    return text + texts.ADMIN_SERVICE_PRICES.format(lines=lines)
+    addon = texts.ADMIN_SERVICE_ADDON if prices.addon else ""
+    return text + texts.ADMIN_SERVICE_PRICES.format(lines=lines, addon=addon)
 
 
 def admin_master_text(master: Master) -> str:
