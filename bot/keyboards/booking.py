@@ -14,9 +14,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot import texts
 from bot.db.models import Master, Pet, Service
-from bot.config import BusinessInfo, PetsConfig
+from bot.config import MIXED, BusinessInfo, PetsConfig, PetSpecies, PetWeight
 from bot.keyboards.callbacks import (
     ANY_MASTER,
+    AddonCb,
     NEW_PET,
     DateCb,
     MasterCb,
@@ -31,6 +32,14 @@ from bot.keyboards.callbacks import (
 from bot.services.formatting import fmt_date, fmt_time, service_button
 from bot.services.pets import Offer
 from bot.services.slots import DayPart, group_by_day_part
+
+
+def _grid(count: int, per_row: int) -> list[int]:
+    """Розкладка: `count` кнопок по `per_row` у ряд; «Назад» після них — окремим рядом."""
+    rows = [per_row] * (count // per_row)
+    if count % per_row:
+        rows.append(count % per_row)
+    return rows + [1]
 
 
 def _with_back(builder: InlineKeyboardBuilder) -> InlineKeyboardBuilder:
@@ -69,7 +78,7 @@ def dates_kb(dates: Sequence[date]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for day in dates:
         builder.button(text=fmt_date(day), callback_data=DateCb(day=day.isoformat()))
-    _with_back(builder).adjust(*([3] * ((len(dates) + 2) // 3)), 1)
+    _with_back(builder).adjust(*_grid(len(dates), 3))
     return builder.as_markup()
 
 
@@ -172,7 +181,9 @@ def pets_kb(pets: Sequence[Pet], config: PetsConfig) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for pet in pets:
         builder.button(
-            text=texts.PET_BUTTON.format(name=pet.name, size=config.size_label(pet.size)),
+            text=texts.PET_BUTTON.format(
+                name=pet.name, category=config.describe(pet.category, with_species=False)
+            ),
             callback_data=PetCb(pet_id=pet.id),
         )
     builder.button(text=texts.BTN_NEW_PET, callback_data=PetCb(pet_id=NEW_PET))
@@ -188,13 +199,35 @@ def pet_species_kb(config: PetsConfig) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def pet_size_kb(config: PetsConfig) -> InlineKeyboardMarkup:
+def pet_breed_kb(species: PetSpecies) -> InlineKeyboardMarkup:
+    """Популярні породи + «Інша порода / метис»."""
     builder = InlineKeyboardBuilder()
-    for option in config.sizes:
-        label = (
-            texts.PET_SIZE_BUTTON.format(label=option.label, hint=option.hint)
-            if option.hint else option.label
+    for breed in species.breeds:
+        builder.button(text=breed.name, callback_data=PetOptionCb(kind="breed", key=breed.key))
+    if species.other_label:
+        builder.button(text=species.other_label, callback_data=PetOptionCb(kind="breed", key=MIXED))
+    _with_back(builder).adjust(*([2] * (len(species.breeds) // 2)), 1, 1, 1)
+    return builder.as_markup()
+
+
+def pet_weight_kb(weights: Sequence[PetWeight]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for weight in weights:
+        builder.button(text=weight.label, callback_data=PetOptionCb(kind="weight", key=weight.key))
+    _with_back(builder).adjust(*_grid(len(weights), 3))
+    return builder.as_markup()
+
+
+def addons_kb(
+    addons: Sequence[tuple[Service, Offer]], selected: set[int]
+) -> InlineKeyboardMarkup:
+    """Додаткові послуги-перемикачі (✅ / ▫️) і «Далі»."""
+    builder = InlineKeyboardBuilder()
+    for service, offer in addons:
+        mark = texts.ADDON_SELECTED if service.id in selected else texts.ADDON_UNSELECTED
+        builder.button(
+            text=mark + service_button(service, offer), callback_data=AddonCb(service_id=service.id)
         )
-        builder.button(text=label, callback_data=PetOptionCb(kind="size", key=option.key))
+    builder.button(text=texts.BTN_ADDONS_NEXT, callback_data=NavCb(action="next"))
     _with_back(builder).adjust(1)
     return builder.as_markup()

@@ -180,8 +180,9 @@ class Pet(Base):
     )
     name: Mapped[str] = mapped_column(String(50))
     species: Mapped[str] = mapped_column(String(30))  # ключ виду з профілю
-    breed: Mapped[str] = mapped_column(String(50))
-    size: Mapped[str] = mapped_column(String(30))  # ключ розміру з профілю
+    breed: Mapped[str] = mapped_column(String(50))  # назва породи для показу
+    # Категорія прайсу — шлях вид/порода/вага з профілю: dog/spitz/4, dog/mixed/12
+    category: Mapped[str] = mapped_column(String(60))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
     client: Mapped[Client] = relationship()
@@ -222,14 +223,20 @@ class Booking(Base):
     client_confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     # Тварина (лише для профілів із тваринами)
     pet_id: Mapped[int | None] = mapped_column(ForeignKey("pets.id", ondelete="RESTRICT"))
-    # Ціна на момент запису: залежить від розміру тварини й не змінюється разом із прайсом.
-    # None — старі записи, ціна береться з послуги
+    # Ціна на момент запису (разом із додатковими послугами): залежить від тварини
+    # й не змінюється разом із прайсом. None — старі записи, ціна береться з послуги
     price: Mapped[int | None] = mapped_column(Integer)
+    # Ціна «від X грн»: точна — після огляду майстром
+    price_from: Mapped[bool] = mapped_column(default=False, server_default="0")
 
     client: Mapped[Client] = relationship()
     master: Mapped[Master] = relationship()
     service: Mapped[Service] = relationship()
     pet: Mapped[Pet | None] = relationship()
+    addons: Mapped[list["BookingAddon"]] = relationship(
+        back_populates="booking", cascade="all, delete-orphan", passive_deletes=True,
+        order_by="BookingAddon.id",
+    )
 
     @property
     def duration_min(self) -> int:
@@ -238,6 +245,24 @@ class Booking(Base):
     @property
     def display_price(self) -> int:
         return self.price if self.price is not None else self.service.price
+
+
+class BookingAddon(Base):
+    """Додаткова послуга в записі (чищення вух тощо). Ціна й тривалість — на момент запису."""
+
+    __tablename__ = "booking_addons"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    booking_id: Mapped[int] = mapped_column(
+        ForeignKey("bookings.id", ondelete="CASCADE"), index=True
+    )
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id", ondelete="RESTRICT"))
+    price: Mapped[int] = mapped_column(Integer)
+    price_from: Mapped[bool] = mapped_column(default=False, server_default="0")
+    duration_min: Mapped[int] = mapped_column(Integer)
+
+    booking: Mapped[Booking] = relationship(back_populates="addons")
+    service: Mapped[Service] = relationship()
 
 
 class FsmState(Base):

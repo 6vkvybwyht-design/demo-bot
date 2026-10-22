@@ -12,7 +12,7 @@ from aiogram import Bot, html
 from aiogram.exceptions import TelegramAPIError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from bot.db.repo import booking_details
 
 from bot import texts
 from bot.config import BusinessConfig
@@ -41,12 +41,7 @@ async def load_booking(session: AsyncSession, booking_id: int) -> Booking:
     return await session.scalar(
         select(Booking)
         .where(Booking.id == booking_id)
-        .options(
-            selectinload(Booking.client),
-            selectinload(Booking.master),
-            selectinload(Booking.service),
-            selectinload(Booking.pet),
-        )
+        .options(*booking_details())
         .execution_options(populate_existing=True)
     )
 

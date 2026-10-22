@@ -110,3 +110,18 @@ def test_booking_done_text_without_reminders():
     text = booking_done_text(summary="...", address="addr", reminders=PlannedReminders(False, False))
     assert "нагадаємо" not in text
     assert text.endswith(texts.MANAGE_BOOKING)
+
+
+@pytest.mark.parametrize("count", [1, 2, 3, 4, 5, 6, 11, 14])
+def test_back_button_on_its_own_row(count):
+    from datetime import timedelta
+
+    from bot.config import PetWeight
+    from bot.keyboards.booking import dates_kb, pet_weight_kb
+
+    dates = dates_kb([DAY + timedelta(days=i) for i in range(count)]).inline_keyboard
+    weights = pet_weight_kb([PetWeight(key=str(i), label=f"{i} кг") for i in range(count)]).inline_keyboard
+    for rows in (dates, weights):
+        assert [b.text for b in rows[-1]] == [texts.BTN_BACK]
+        assert sum(len(row) for row in rows[:-1]) == count
+        assert all(len(row) <= 3 for row in rows)

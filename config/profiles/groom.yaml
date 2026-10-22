@@ -1,6 +1,6 @@
 # Профіль «Грумінг-салон». Обирається в .env: BUSINESS_PROFILE=groom
-# Запис із твариною: клієнт вказує кличку, вид, породу й розмір, а тривалість
-# і ціна послуги залежать від розміру (розділ pets.prices).
+# Запис із твариною: клієнт обирає вид, породу (або «Інша порода / метис») і,
+# якщо треба, вагу. Ціна й тривалість послуги залежать від цієї категорії.
 # Час пишіть у лапках: "09:00" (без лапок YAML прочитає 9:00 як число).
 
 business:
@@ -26,63 +26,205 @@ texts:
   SERVICE_ICON: "🐩"
 
 pets:
+  # Категорія тварини — шлях вид/порода/вага: dog/spitz/4, dog/mixed/12
+  # (mixed — «інша порода / метис»), cat/mainecoon, rabbit.
   species:
-    # label — кнопка, name — як писати в записі й сповіщеннях
-    - {key: dog, label: "🐕 Собака", name: "собака"}
-    - {key: cat, label: "🐈 Кіт", name: "кіт"}
-  sizes:
-    - {key: mini, label: "Міні", hint: "до 5 кг"}
-    - {key: small, label: "Малий", hint: "5–10 кг"}
-    - {key: medium, label: "Середній", hint: "10–25 кг"}
-    - {key: large, label: "Великий", hint: "понад 25 кг"}
-  # Прайс: назва послуги (як у списку послуг) → розмір → тривалість у хв і ціна в грн.
-  # Якщо розміру в рядку немає, для тварин цього розміру послуга недоступна.
-  prices:
-    "Комплексний грумінг":
-      mini: {duration_min: 90, price: 700}
-      small: {duration_min: 120, price: 900}
-      medium: {duration_min: 150, price: 1200}
-      large: {duration_min: 180, price: 1600}
-    "Стрижка":
-      mini: {duration_min: 60, price: 500}
-      small: {duration_min: 75, price: 650}
-      medium: {duration_min: 90, price: 850}
-      large: {duration_min: 120, price: 1100}
+    - key: dog
+      label: "🐕 Собака"
+      name: "собака"
+      breeds:
+        - {key: york, name: "Йоркширський тер'єр"}
+        - key: spitz
+          name: "Шпіц"
+          weights: [{key: "4", label: "до 4 кг"}, {key: "6", label: "до 6 кг"}, {key: "6+", label: "від 6 кг"}]
+        - {key: maltese, name: "Мальтійська болонка"}
+        - {key: shihtzu, name: "Ши-цу"}
+        - key: toypoodle
+          name: "Той-пудель / мальтіпу"
+          weights: [{key: "4", label: "до 4 кг"}, {key: "6", label: "до 6 кг"}]
+        - {key: cockapoo, name: "Кокапу"}
+        - key: poodle
+          name: "Пудель"
+          weights: [{key: "10", label: "6–10 кг"}, {key: "14", label: "10–14 кг"}, {key: "14+", label: "від 14 кг"}]
+        - {key: bichon, name: "Бішон фрізе"}
+        - {key: cocker, name: "Кокер-спаніель"}
+        - {key: westie, name: "Вест хайленд вайт тер'єр"}
+        - {key: schnauzer, name: "Цверг-шнауцер"}
+      other_label: "Інша порода / метис"
+      weights:
+        - {key: "4", label: "до 4 кг"}
+        - {key: "6", label: "до 6 кг"}
+        - {key: "12", label: "до 12 кг"}
+        - {key: "16", label: "до 16 кг"}
+        - {key: "16+", label: "від 16 кг"}
+    - key: cat
+      label: "🐈 Кіт"
+      name: "кіт"
+      breeds:
+        - {key: mainecoon, name: "Мейн-кун"}
+      other_label: "Інша порода"
+      weights:
+        - {key: "4", label: "до 4 кг"}
+        - {key: "4+", label: "від 4 кг"}
+    - key: rabbit
+      label: "🐇 Кролик"
+      name: "кролик"
+
+  # Прайс: назва послуги (як у списку послуг) → категорія або її початок → ціна.
+  # Береться найточніший ключ: dog/spitz/4 → dog/spitz → dog.
+  # from: true — «від X грн», точна ціна після огляду майстром.
+  # Тривалість (демо): комплексний догляд до 6 кг — 2 год, до 16 кг — 2,5 год,
+  # від 16 кг — 3 год; гігієнічний — 1–1,5 год; експрес-линька — 1,5–3 год;
+  # для порід тривалість взято за їхньою типовою вагою.
+  services:
+    "Комплексний догляд":
+      prices:
+        dog/mixed/4: {price: 900, from: true, duration_min: 120}
+        dog/mixed/6: {price: 1000, from: true, duration_min: 120}
+        dog/mixed/12: {price: 1100, from: true, duration_min: 150}
+        dog/mixed/16: {price: 1200, from: true, duration_min: 150}
+        dog/mixed/16+: {price: 1300, from: true, duration_min: 180}
+        dog/york: {price: 1100, duration_min: 120}
+        dog/spitz/4: {price: 1200, duration_min: 120}
+        dog/spitz/6: {price: 1300, duration_min: 120}
+        dog/spitz/6+: {price: 1400, duration_min: 150}
+        dog/maltese: {price: 1200, duration_min: 120}
+        dog/shihtzu: {price: 1200, duration_min: 120}
+        dog/toypoodle/4: {price: 1300, duration_min: 120}
+        dog/toypoodle/6: {price: 1400, duration_min: 120}
+        dog/cockapoo: {price: 1450, duration_min: 150}
+        dog/poodle/10: {price: 1600, duration_min: 150}
+        dog/poodle/14: {price: 1900, duration_min: 150}
+        dog/poodle/14+: {price: 2000, from: true, duration_min: 180}
+        dog/bichon: {price: 1400, from: true, duration_min: 150}
+        dog/cocker: {price: 1300, duration_min: 150}
+        dog/westie: {price: 1400, duration_min: 150}
+        dog/schnauzer: {price: 1300, duration_min: 150}
+        cat/mixed/4: {price: 1200, duration_min: 120}
+        cat/mixed/4+: {price: 1300, duration_min: 120}
+        cat/mainecoon: {price: 1400, duration_min: 120}
+
+    "Гігієнічний догляд":
+      prices:
+        dog/mixed/4: {price: 700, from: true, duration_min: 60}
+        dog/mixed/6: {price: 750, from: true, duration_min: 60}
+        dog/mixed/12: {price: 900, from: true, duration_min: 75}
+        dog/mixed/16: {price: 1000, from: true, duration_min: 75}
+        dog/mixed/16+: {price: 1100, from: true, duration_min: 90}
+        dog/york: {price: 900, duration_min: 60}
+        dog/spitz/4: {price: 1000, duration_min: 60}
+        dog/spitz/6: {price: 1100, duration_min: 60}
+        dog/spitz/6+: {price: 1200, duration_min: 75}
+        dog/maltese: {price: 1000, duration_min: 60}
+        dog/shihtzu: {price: 1000, duration_min: 60}
+        dog/toypoodle: {price: 1100, duration_min: 60}
+        dog/cockapoo: {price: 1150, duration_min: 75}
+        dog/poodle/10: {price: 1500, duration_min: 75}
+        dog/poodle/14: {price: 1700, duration_min: 75}
+        dog/poodle/14+: {price: 1800, from: true, duration_min: 90}
+        dog/bichon: {price: 1100, from: true, duration_min: 75}
+        dog/cocker: {price: 1000, duration_min: 75}
+        dog/westie: {price: 1100, duration_min: 75}
+        dog/schnauzer: {price: 1000, duration_min: 75}
+
+    # Прайс лише для метисів за вагою, тож порідним собакам послуга не показується
+    "Експрес-линька":
+      prices:
+        dog/mixed/4: {price: 700, duration_min: 90}
+        dog/mixed/6: {price: 900, from: true, duration_min: 120}
+        dog/mixed/12: {price: 1100, from: true, duration_min: 150}
+        dog/mixed/16: {price: 1200, from: true, duration_min: 165}
+        dog/mixed/16+: {price: 1400, from: true, duration_min: 180}
+
+    "Вичісування + кігті":
+      prices:
+        cat/mixed/4: {price: 900, duration_min: 60}
+        cat/mixed/4+: {price: 1000, duration_min: 60}
+        cat/mainecoon: {price: 1100, duration_min: 60}
+
     "Купання":
-      mini: {duration_min: 30, price: 300}
-      small: {duration_min: 45, price: 400}
-      medium: {duration_min: 60, price: 550}
-      large: {duration_min: 75, price: 700}
-    "Гігієнічна стрижка":
-      mini: {duration_min: 30, price: 250}
-      small: {duration_min: 30, price: 300}
-      medium: {duration_min: 45, price: 350}
-      large: {duration_min: 45, price: 400}
-    "Підстригання кігтів":
-      mini: {duration_min: 15, price: 150}
-      small: {duration_min: 15, price: 150}
-      medium: {duration_min: 15, price: 200}
-      large: {duration_min: 20, price: 250}
+      prices:
+        cat/mixed/4: {price: 800, duration_min: 60}
+        cat/mixed/4+: {price: 900, duration_min: 60}
+        # Окремої ціни для мейн-куна немає — як для котів від 4 кг
+        cat/mainecoon: {price: 900, duration_min: 60}
+
+    "Обрізання кігтів":
+      prices:
+        cat: {price: 200, duration_min: 15}
+
     "Вичісування":
-      mini: {duration_min: 30, price: 350}
-      small: {duration_min: 45, price: 450}
-      medium: {duration_min: 60, price: 600}
-      large: {duration_min: 90, price: 800}
+      prices:
+        rabbit: {price: 600, from: true, duration_min: 60}
+
+    # --- Додаткові послуги: для котів і собак, на додачу до основної ---
+    "Чищення зубів":
+      addon: true
+      prices:
+        dog: {price: 150, duration_min: 15}
+        cat: {price: 150, duration_min: 15}
+    "Чищення вух":
+      addon: true
+      prices:
+        dog: {price: 100, duration_min: 15}
+        cat: {price: 100, duration_min: 15}
+    "Підрізання та запилювання кігтів":
+      addon: true
+      prices:
+        dog: {price: 200, duration_min: 15}
+        cat: {price: 200, duration_min: 15}
+    "Чищення параанальних залоз":
+      addon: true
+      prices:
+        dog: {price: 200, duration_min: 15}
+        cat: {price: 200, duration_min: 15}
+    "Вичісування / видалення ковтунів":
+      addon: true
+      prices:
+        dog: {price: 100, from: true, duration_min: 15}
+        cat: {price: 100, from: true, duration_min: 15}
+    # 200 грн до 8 кг, 300 грн від 8 кг. Для категорій, що охоплюють 8 кг
+    # (метис до 12 кг) або з типовою вагою довкола 8 кг, — «від 200».
+    "Маска для шерсті":
+      addon: true
+      prices:
+        dog: {price: 200, duration_min: 15}
+        dog/mixed/12: {price: 200, from: true, duration_min: 15}
+        dog/mixed/16: {price: 300, duration_min: 15}
+        dog/mixed/16+: {price: 300, duration_min: 15}
+        dog/spitz/6+: {price: 200, from: true, duration_min: 15}
+        dog/cockapoo: {price: 200, from: true, duration_min: 15}
+        dog/poodle/10: {price: 200, from: true, duration_min: 15}
+        dog/poodle/14: {price: 300, duration_min: 15}
+        dog/poodle/14+: {price: 300, duration_min: 15}
+        dog/cocker: {price: 300, duration_min: 15}
+        dog/westie: {price: 200, from: true, duration_min: 15}
+        dog/schnauzer: {price: 200, from: true, duration_min: 15}
+        cat: {price: 200, duration_min: 15}
+        cat/mainecoon: {price: 200, from: true, duration_min: 15}
 
 demo:
-  # Тривалість і ціна тут — базові (для розміру «міні»); фактичні беруться з pets.prices
+  # Тривалість і ціна тут — базові (для послуг без прайсу); фактичні — з pets.services
   services:
-    - {key: complex, name: "Комплексний грумінг", duration_min: 90, price: 700}
-    - {key: haircut, name: "Стрижка", duration_min: 60, price: 500}
-    - {key: bath, name: "Купання", duration_min: 30, price: 300}
-    - {key: hygiene, name: "Гігієнічна стрижка", duration_min: 30, price: 250}
-    - {key: claws, name: "Підстригання кігтів", duration_min: 15, price: 150}
-    - {key: brushing, name: "Вичісування", duration_min: 30, price: 350}
+    - {key: complex, name: "Комплексний догляд", duration_min: 120, price: 900}
+    - {key: hygiene, name: "Гігієнічний догляд", duration_min: 60, price: 700}
+    - {key: express, name: "Експрес-линька", duration_min: 90, price: 700}
+    - {key: cat_brush, name: "Вичісування + кігті", duration_min: 60, price: 900}
+    - {key: bath, name: "Купання", duration_min: 60, price: 800}
+    - {key: claws, name: "Обрізання кігтів", duration_min: 15, price: 200}
+    - {key: rabbit_brush, name: "Вичісування", duration_min: 60, price: 600}
+    - {key: teeth, name: "Чищення зубів", duration_min: 15, price: 150}
+    - {key: ears, name: "Чищення вух", duration_min: 15, price: 100}
+    - {key: nails, name: "Підрізання та запилювання кігтів", duration_min: 15, price: 200}
+    - {key: glands, name: "Чищення параанальних залоз", duration_min: 15, price: 200}
+    - {key: mats, name: "Вичісування / видалення ковтунів", duration_min: 15, price: 100}
+    - {key: mask, name: "Маска для шерсті", duration_min: 15, price: 200}
 
+  # Майстри виконують основні послуги; додаткові може зробити будь-хто
   masters:
-    - {name: "Наталія", services: [complex, haircut, bath, hygiene, claws, brushing]}
-    - {name: "Андрій", services: [complex, haircut, bath, brushing]}
-    - {name: "Оксана", services: [bath, hygiene, claws, brushing]}
+    - {name: "Наталія", services: [complex, hygiene, express, cat_brush, bath, claws, rabbit_brush]}
+    - {name: "Андрій", services: [complex, hygiene, express]}
+    - {name: "Оксана", services: [complex, cat_brush, bath, claws, rabbit_brush]}
 
   # Пн–Сб 9:00–19:00, перерва 13:00–14:00, Нд вихідний
   schedule:
@@ -93,27 +235,25 @@ demo:
     break_end: "14:00"
 
   clients:
-    - {name: "Олег", phone: "+380501112255",
-       pet: {name: "Рекс", species: dog, breed: "лабрадор", size: large}}
-    - {name: "Ірина", phone: "+380672223366",
-       pet: {name: "Мурка", species: cat, breed: "британська", size: small}}
-    - {name: "Тарас", phone: "+380633334477",
-       pet: {name: "Бобік", species: dog, breed: "джек-рассел-тер'єр", size: small}}
-    - {name: "Віра", phone: "+380934445588",
-       pet: {name: "Лакі", species: dog, breed: "шпіц", size: mini}}
-    - {name: "Максим", phone: "+380995556699",
-       pet: {name: "Граф", species: dog, breed: "бігль", size: medium}}
+    - {name: "Олег", phone: "+380501112255", pet: {name: "Рекс", species: dog, breed: mixed, weight: "16+"}}
+    - {name: "Ірина", phone: "+380672223366", pet: {name: "Мурка", species: cat, breed: mixed, weight: "4"}}
+    - {name: "Тарас", phone: "+380633334477", pet: {name: "Бусинка", species: dog, breed: york}}
+    - {name: "Віра", phone: "+380934445588", pet: {name: "Лакі", species: dog, breed: spitz, weight: "4"}}
+    - {name: "Максим", phone: "+380995556699", pet: {name: "Граф", species: dog, breed: poodle, weight: "10"}}
+    - {name: "Ольга", phone: "+380671234455", pet: {name: "Пухнастик", species: rabbit}}
+    - {name: "Марко", phone: "+380731112266", pet: {name: "Барон", species: cat, breed: mainecoon}}
 
-  # Зайняті слоти на тиждень наперед. Тривалість залежить від розміру тварини,
-  # тож запис, що не вмістився (великий пес), seed пропускає.
+  # Зайняті слоти на тиждень наперед. Для кожного слоту береться клієнт, чия
+  # тварина підходить послузі; запис, що з тривалістю для тварини не вмістився,
+  # пропускається.
   booking_days: 7
   booking_patterns:
-    - [{time: "09:00", service: complex}, {time: "12:30", service: claws},
-       {time: "14:00", service: bath}, {time: "16:00", service: haircut}]
-    - [{time: "09:30", service: bath}, {time: "11:00", service: hygiene},
-       {time: "14:30", service: complex}, {time: "17:45", service: brushing}]
-    - [{time: "10:00", service: haircut}, {time: "15:00", service: brushing},
-       {time: "17:00", service: bath}]
+    - [{time: "09:00", service: complex}, {time: "11:30", service: hygiene},
+       {time: "14:00", service: express}, {time: "17:00", service: claws}]
+    - [{time: "09:00", service: cat_brush}, {time: "10:30", service: complex},
+       {time: "14:30", service: bath}, {time: "16:00", service: rabbit_brush}]
+    - [{time: "09:30", service: hygiene}, {time: "11:00", service: rabbit_brush},
+       {time: "15:00", service: complex}]
 
   time_off:
     - {master: "Андрій", day_offset: 2, start: "09:00", end: "12:00", reason: "Особисті справи"}

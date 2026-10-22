@@ -1,15 +1,17 @@
 """Створення записів і робота з клієнтами."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from bot.db.repo import booking_details
 
 from bot.config import BookingRules, Reminders
-from bot.db.models import Booking, BookingStatus, Client, Master, Service
+from bot.db.models import Booking, BookingAddon, BookingStatus, Client, Master, Service
 from bot.services import slots
+from bot.services.pets import Offer
 
 
 class SlotUnavailableError(Exception):
@@ -111,10 +113,13 @@ async def create_booking(
     duration_min: int | None = None,
     price: int | None = None,
     pet_id: int | None = None,
+    price_from: bool = False,
+    addons: Sequence[tuple[int, Offer]] = (),
 ) -> Booking:
     """Створює запис, повторно перевіряючи слот у межах однієї транзакції.
 
-    `duration_min` і `price` — для тварини конкретного розміру (за замовчуванням з послуги).
+    `duration_min` і `price` — разом із додатковими послугами й для конкретної тварини
+    (за замовчуванням — з послуги). `addons` — (id додаткової послуги, її ціна й тривалість).
 
     `master_id=None` — «будь-який майстер»: призначаємо вільного майстра
     з найменшою кількістю записів у цей день.
@@ -157,7 +162,15 @@ async def create_booking(
             end_dt=start + timedelta(minutes=duration_min or service.duration_min),
             created_at=now,
             price=price if price is not None else service.price,
+            price_from=price_from,
             pet_id=pet_id,
+            addons=[
+                BookingAddon(
+                    service_id=service_id, price=offer.price, price_from=offer.price_from,
+                    duration_min=offer.duration_min,
+                )
+                for service_id, offer in addons
+            ],
         )
         _plan_reminders(booking, now, reminders)
         session.add(booking)
@@ -183,7 +196,7 @@ async def get_upcoming_bookings(
             Booking.status == BookingStatus.CONFIRMED,
             Booking.start_dt > now,
         )
-        .options(selectinload(Booking.service), selectinload(Booking.master), selectinload(Booking.pet))
+        .options(*booking_details())
         .order_by(Booking.start_dt)
     )
     return list(result.all())
@@ -207,7 +220,7 @@ async def get_own_booking(
             Booking.status == BookingStatus.CONFIRMED,
             Booking.start_dt > now,
         )
-        .options(selectinload(Booking.service), selectinload(Booking.master), selectinload(Booking.pet))
+        .options(*booking_details())
         .execution_options(populate_existing=True)
     )
     if booking is None:

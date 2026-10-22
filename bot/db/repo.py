@@ -4,8 +4,23 @@ from collections.abc import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from bot.db.models import Master, MasterService, Service
+from bot.db.models import Booking, BookingAddon, Master, MasterService, Service
+
+
+def booking_details() -> tuple:
+    """Усе, що показуємо в картці запису: клієнт, майстер, послуга, тварина, додаткові послуги.
+
+    Завантажуємо одразу: ліниве довантаження в async-сесії не працює.
+    """
+    return (
+        selectinload(Booking.client),
+        selectinload(Booking.master),
+        selectinload(Booking.service),
+        selectinload(Booking.pet),
+        selectinload(Booking.addons).selectinload(BookingAddon.service),
+    )
 
 
 async def get_active_services(session: AsyncSession) -> Sequence[Service]:

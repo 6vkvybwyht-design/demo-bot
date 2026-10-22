@@ -124,9 +124,10 @@ async def reset_demo_data(
     pets: dict[int, Pet] = {}
     for client, item in zip(clients, demo.clients):
         if item.pet is not None:
+            category = business.pets.category_path(item.pet.species, item.pet.breed, item.pet.weight)
             pets[client.id] = Pet(
                 client_id=client.id, name=item.pet.name, species=item.pet.species,
-                breed=item.pet.breed, size=item.pet.size,
+                category=category, breed=business.pets.describe(category, with_species=False),
             )
     session.add_all(pets.values())
 
@@ -153,10 +154,18 @@ async def reset_demo_data(
                 service = _service_for(master, services[slot.service], services, demo)
                 if service is None:
                     continue
-                client = clients[len(bookings) % len(clients)]
-                pet = pets.get(client.id)
-                # Тривалість і ціна — за розміром тварини, якщо вона є
-                offer = offer_for(service, pet.size if pet else None, business.pets)
+                # Клієнт по колу; якщо його тварині послуга не підходить (кіт і стрижка
+                # пса) — наступний, чия тварина підходить
+                client, pet, offer = None, None, None
+                for shift in range(len(clients)):
+                    candidate = clients[(len(bookings) + shift) % len(clients)]
+                    candidate_pet = pets.get(candidate.id)
+                    candidate_offer = offer_for(
+                        service, candidate_pet.category if candidate_pet else None, business.pets
+                    )
+                    if candidate_offer is not None:
+                        client, pet, offer = candidate, candidate_pet, candidate_offer
+                        break
                 if offer is None:
                     continue
                 start = _local_dt(day, slot.time, business)
@@ -172,6 +181,7 @@ async def reset_demo_data(
                         client=client,
                         pet=pet,
                         price=offer.price,
+                        price_from=offer.price_from,
                         master=master,
                         service=service,
                         start_dt=start,
