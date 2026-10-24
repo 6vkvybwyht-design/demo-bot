@@ -5,10 +5,11 @@
 """
 
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from enum import Enum
+from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -136,6 +137,28 @@ def pick_least_busy_master(candidate_ids: Sequence[int], bookings_per_master: Co
 # --- Робота з БД --------------------------------------------------------------
 
 
+class SlotFilter(Protocol):
+    """Додаткова умова для слотів, крім графіка майстра (наприклад, ресурси спа)."""
+
+    async def for_day(
+        self, session: AsyncSession, day: date, rules: BookingRules, exclude_booking_id: int | None
+    ) -> Callable[[datetime], bool]: ...
+
+
+async def _apply_filter(
+    starts: list[datetime],
+    resources: SlotFilter | None,
+    session: AsyncSession,
+    day: date,
+    rules: BookingRules,
+    exclude_booking_id: int | None,
+) -> list[datetime]:
+    if resources is None or not starts:
+        return starts
+    allowed = await resources.for_day(session, day, rules, exclude_booking_id)
+    return [start for start in starts if allowed(start)]
+
+
 @dataclass(frozen=True)
 class _MasterDay:
     schedule: WorkingHours | None
@@ -217,15 +240,17 @@ async def get_free_slots(
     now: datetime,
     exclude_booking_id: int | None = None,
     duration_min: int | None = None,
+    resources: SlotFilter | None = None,
 ) -> list[datetime]:
     """Вільні слоти конкретного майстра на місцеву дату.
 
     `duration_min` — якщо тривалість не з послуги (розмір тварини, перенесення запису).
+    `resources` — додатково лишає слоти, на які вистачає ресурсів (кабінети спа тощо).
     """
     if not await _master_does_service(session, master_id, service.id):
         return []
     master_day = await _load_master_day(session, master_id, day, rules.tz, exclude_booking_id)
-    return compute_free_slots(
+    starts = compute_free_slots(
         day=day,
         schedule=master_day.schedule,
         busy=master_day.busy,
@@ -233,6 +258,7 @@ async def get_free_slots(
         rules=rules,
         now=now,
     )
+    return await _apply_filter(starts, resources, session, day, rules, exclude_booking_id)
 
 
 async def get_free_slots_any_master(
@@ -243,6 +269,7 @@ async def get_free_slots_any_master(
     rules: BookingRules,
     now: datetime,
     duration_min: int | None = None,
+    resources: SlotFilter | None = None,
 ) -> dict[datetime, list[int]]:
     """«Будь-який майстер»: об'єднання слотів. Ключ — початок слоту, значення — id вільних майстрів."""
     slots: dict[datetime, list[int]] = {}
@@ -257,7 +284,8 @@ async def get_free_slots_any_master(
             now=now,
         ):
             slots.setdefault(start, []).append(master_id)
-    return dict(sorted(slots.items()))
+    allowed = set(await _apply_filter(list(slots), resources, session, day, rules, None))
+    return {start: ids for start, ids in sorted(slots.items()) if start in allowed}
 
 
 async def pick_master_for_slot(
@@ -285,6 +313,7 @@ async def get_available_dates(
     now: datetime,
     exclude_booking_id: int | None = None,
     duration_min: int | None = None,
+    resources: SlotFilter | None = None,
 ) -> list[date]:
     """Дати в межах горизонту запису, на які є хоча б один вільний слот.
 
@@ -298,7 +327,7 @@ async def get_available_dates(
             has_slots = bool(
                 await get_free_slots_any_master(
                     session, service=service, day=day, rules=rules, now=now,
-                    duration_min=duration_min,
+                    duration_min=duration_min, resources=resources,
                 )
             )
         else:
@@ -312,6 +341,7 @@ async def get_available_dates(
                     now=now,
                     exclude_booking_id=exclude_booking_id,
                     duration_min=duration_min,
+                    resources=resources,
                 )
             )
         if has_slots:
@@ -329,6 +359,7 @@ async def is_slot_available(
     now: datetime,
     exclude_booking_id: int | None = None,
     duration_min: int | None = None,
+    resources: SlotFilter | None = None,
 ) -> bool:
     """Повторна перевірка слоту перед підтвердженням запису (захист від подвійного запису)."""
     day = start.astimezone(rules.tz).date()
@@ -341,5 +372,6 @@ async def is_slot_available(
         now=now,
         exclude_booking_id=exclude_booking_id,
         duration_min=duration_min,
+        resources=resources,
     )
     return start.astimezone(UTC) in slots

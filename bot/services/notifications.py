@@ -10,26 +10,29 @@ from datetime import datetime
 
 from aiogram import Bot, html
 from aiogram.exceptions import TelegramAPIError
+from aiogram.types import InlineKeyboardMarkup
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from bot.db.repo import booking_details
 
 from bot import texts
 from bot.config import BusinessConfig
-from bot.db.models import Booking
+from bot.db.models import Booking, Client
 from bot.services.demo import FULL_ACCESS, Viewer, is_demo_client
 from bot.services.formatting import fmt_when, summary_of
 
 logger = logging.getLogger(__name__)
 
 
-async def safe_send(bot: Bot, chat_id: int, text: str) -> bool:
+async def safe_send(
+    bot: Bot, chat_id: int, text: str, reply_markup: InlineKeyboardMarkup | None = None
+) -> bool:
     """Надсилає повідомлення. Повертає False, якщо не вдалося (і логує причину)."""
     if is_demo_client(chat_id):
         # Вигаданий демо-клієнт — такого чату не існує
         return False
     try:
-        await bot.send_message(chat_id, text)
+        await bot.send_message(chat_id, text, reply_markup=reply_markup)
     except TelegramAPIError as exc:
         logger.warning("Не вдалося надіслати сповіщення в чат %s: %s", chat_id, exc)
         return False
@@ -87,9 +90,11 @@ async def notify_staff(
     exclude: int | None = None,
     demo_mode: bool = False,
     actor_id: int | None = None,
+    reply_markup: InlineKeyboardMarkup | None = None,
 ) -> str:
     """Сповіщення власникам і майстру. `exclude` — хто сам виконав дію.
 
+    `reply_markup` — кнопки для власника (наприклад, «Аванс отримано» / «Скасувати»).
     Повертає текст сповіщення (у демо його показуємо й відвідувачу).
     """
     booking = await load_booking(session, booking_id)
@@ -98,7 +103,7 @@ async def notify_staff(
     for chat_id in staff_recipients(
         booking, admin_ids, exclude, demo_mode=demo_mode, actor_id=actor_id
     ):
-        await safe_send(bot, chat_id, text)
+        await safe_send(bot, chat_id, text, reply_markup)
     return text
 
 
@@ -111,3 +116,28 @@ async def notify_client_cancelled_by_admin(
         summary=summary, phone=html.quote(business.business.phone)
     )
     return await safe_send(bot, booking.client.telegram_id, text)
+
+
+async def notify_client(
+    bot: Bot, session: AsyncSession, *, booking_id: int, template: str, business: BusinessConfig
+) -> bool:
+    """Повідомлення клієнту про його запис (аванс отримано, бронювання скасовано)."""
+    booking = await load_booking(session, booking_id)
+    text = template.format(
+        summary=summary_of(booking, business), phone=html.quote(business.business.phone)
+    )
+    return await safe_send(bot, booking.client.telegram_id, text)
+
+
+async def notify_certificate(
+    bot: Bot, *, item: str, client: Client, admin_ids: Iterable[int]
+) -> str:
+    """Заявка на подарунковий сертифікат — власникам. Повертає текст (для демо)."""
+    text = texts.NOTIFY_CERTIFICATE.format(
+        item=html.quote(item),
+        client=html.quote(client.name),
+        phone=html.quote(client.phone or texts.NO_PHONE),
+    )
+    for chat_id in dict.fromkeys(admin_ids):
+        await safe_send(bot, chat_id, text)
+    return text

@@ -7,7 +7,7 @@ from bot import texts
 from bot.db.fsm_storage import DbStorage
 from bot.db.models import Booking, FsmState
 from bot.db.session import create_session_factory
-from bot.handlers import admin, client, fallback, my_bookings
+from bot.handlers import admin, client, fallback, my_bookings, spa
 from bot.main import create_dispatcher
 from bot.services.demo import reset_demo
 from bot.states import BookingStates
@@ -60,7 +60,7 @@ async def test_cleared_state_removes_row(engine):
 
 
 def _detach_routers() -> None:
-    for module in (admin, client, fallback, my_bookings):
+    for module in (admin, client, fallback, my_bookings, spa):
         module.router._parent_router = None
 
 

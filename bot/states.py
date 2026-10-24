@@ -16,6 +16,21 @@ class BookingStates(StatesGroup):
     confirm = State()
 
 
+class SpaStates(StatesGroup):
+    category = State()  # розділ: програми, масаж, відпочинок…
+    service = State()  # послуга в розділі
+    card = State()  # картка послуги: опис, варіанти тривалості
+    guests = State()
+    addons = State()
+    event_date = State()  # дата групової події
+    cert = State()  # сертифікат: на послугу чи на суму
+    cert_category = State()
+    cert_service = State()
+    cert_amount = State()
+    cert_confirm = State()
+    cert_phone = State()
+
+
 class RescheduleStates(StatesGroup):
     date = State()
     time = State()

@@ -113,6 +113,10 @@ class TelegramUser:
         """Тексти, які бот надіслав у чат `chat_id` під час дій цього користувача."""
         return [r.text for r in self.session.requests if isinstance(r, SendMessage) and r.chat_id == chat_id]
 
+    def all_texts(self) -> list[str]:
+        """Усі тексти, надіслані й відредаговані в чаті користувача."""
+        return [r.text for r in self._own() if isinstance(r, (SendMessage, EditMessageText))]
+
     def last_text(self) -> str:
         texts = [r.text for r in self._own() if isinstance(r, (SendMessage, EditMessageText))]
         return texts[-1]

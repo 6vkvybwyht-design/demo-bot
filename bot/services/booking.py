@@ -8,9 +8,10 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from bot.db.repo import booking_details
 
-from bot.config import BookingRules, Reminders
+from bot.config import BookingRules, Reminders, SpaConfig
 from bot.db.models import Booking, BookingAddon, BookingStatus, Client, Master, Service
 from bot.services import slots
+from bot.services import spa as spa_service
 from bot.services.pets import Offer
 
 
@@ -24,6 +25,21 @@ class BookingNotFoundError(Exception):
 
 class ChangeDeadlinePassedError(Exception):
     """До візиту лишилося менше, ніж дедлайн скасування/перенесення."""
+
+
+class EventFullError(SlotUnavailableError):
+    """На групову подію не лишилося стільки вільних місць."""
+
+
+@dataclass(frozen=True)
+class SpaExtras:
+    """Що додає до запису спа: ресурси, гості, аванс."""
+
+    resources: spa_service.ResourceFilter | None = None
+    guests: int | None = None
+    guests_details: str | None = None
+    deposit: int | None = None
+    hold_min: int = 30  # скільки тримаємо час без авансу
 
 
 async def get_client(session: AsyncSession, telegram_id: int) -> Client | None:
@@ -86,6 +102,26 @@ def _plan_reminders(booking: Booking, now: datetime, reminders: Reminders) -> No
     booking.reminded_2h = not plan.before_2h
 
 
+def _apply_extras(booking: Booking, extras: SpaExtras | None, now: datetime) -> None:
+    if extras is None:
+        return
+    booking.guests = extras.guests
+    booking.guests_details = extras.guests_details
+    if extras.deposit is not None:
+        booking.deposit = extras.deposit
+        booking.hold_until = now + timedelta(minutes=extras.hold_min)
+    if extras.resources is not None:
+        booking.resources = spa_service.resource_rows(extras.resources.plan, booking.start_dt)
+
+
+async def _lock_all_masters(session: AsyncSession) -> None:
+    """Ресурси спільні для всіх майстрів: блокуємо всіх, щоб записи до різних
+    майстрів не зайняли один кабінет паралельно."""
+    ids = list(await session.scalars(select(Master.id)))
+    if ids:
+        await _lock_masters(session, ids)
+
+
 async def _lock_masters(session: AsyncSession, master_ids: list[int]) -> None:
     """Блокує майстрів до кінця транзакції, щоб паралельні записи не перетнулися.
 
@@ -115,11 +151,13 @@ async def create_booking(
     pet_id: int | None = None,
     price_from: bool = False,
     addons: Sequence[tuple[int, Offer]] = (),
+    extras: SpaExtras | None = None,
 ) -> Booking:
     """Створює запис, повторно перевіряючи слот у межах однієї транзакції.
 
     `duration_min` і `price` — разом із додатковими послугами й для конкретної тварини
     (за замовчуванням — з послуги). `addons` — (id додаткової послуги, її ціна й тривалість).
+    `extras` — спа: ресурси (перевіряються разом зі слотом), гості, аванс.
 
     `master_id=None` — «будь-який майстер»: призначаємо вільного майстра
     з найменшою кількістю записів у цей день.
@@ -132,14 +170,18 @@ async def create_booking(
     # Завершуємо можливу транзакцію з попередніх читань, щоб перевірка
     # йшла вже після блокування
     await session.commit()
+    resources = extras.resources if extras else None
     try:
+        if resources is not None:
+            await _lock_all_masters(session)
         if master_id is None:
             candidates = [m.id for m in await slots.masters_for_service(session, service.id)]
             if not candidates:
                 raise SlotUnavailableError
             await _lock_masters(session, candidates)
             free = await slots.get_free_slots_any_master(
-                session, service=service, day=day, rules=rules, now=now, duration_min=duration_min
+                session, service=service, day=day, rules=rules, now=now, duration_min=duration_min,
+                resources=resources,
             )
             if start not in free:
                 raise SlotUnavailableError
@@ -150,7 +192,7 @@ async def create_booking(
             await _lock_masters(session, [master_id])
             if not await slots.is_slot_available(
                 session, master_id=master_id, service=service, start=start, rules=rules, now=now,
-                duration_min=duration_min,
+                duration_min=duration_min, resources=resources,
             ):
                 raise SlotUnavailableError
 
@@ -172,6 +214,7 @@ async def create_booking(
                 for service_id, offer in addons
             ],
         )
+        _apply_extras(booking, extras, now)
         _plan_reminders(booking, now, reminders)
         session.add(booking)
         await session.commit()
@@ -202,9 +245,26 @@ async def get_upcoming_bookings(
     return list(result.all())
 
 
+def change_deadline_hours(booking: Booking, rules: BookingRules) -> int:
+    """За скільки годин до візиту клієнт ще може скасувати чи перенести запис сам.
+
+    Для записів із внесеним авансом — свій дедлайн (спа: 48 год, аванс лишається
+    на депозиті); пізніше — лише через адміністратора.
+    """
+    if booking.deposit is not None and booking.deposit_paid_at is not None:
+        if rules.deposit_deadline_hours is not None:
+            return rules.deposit_deadline_hours
+    return rules.cancel_deadline_hours
+
+
 def can_client_change(booking: Booking, rules: BookingRules, now: datetime) -> bool:
     """Клієнт може скасувати чи перенести запис, якщо до візиту більше за дедлайн."""
-    return booking.start_dt - now > timedelta(hours=rules.cancel_deadline_hours)
+    return booking.start_dt - now > timedelta(hours=change_deadline_hours(booking, rules))
+
+
+def can_client_cancel(booking: Booking, rules: BookingRules, now: datetime) -> bool:
+    """Скасувати можна як завжди, а бронювання без авансу — будь-коли: нічого не сплачено."""
+    return booking.deposit_pending or can_client_change(booking, rules, now)
 
 
 async def get_own_booking(
@@ -232,7 +292,7 @@ async def cancel_booking_by_client(
     session: AsyncSession, *, booking_id: int, telegram_id: int, rules: BookingRules, now: datetime
 ) -> Booking:
     booking = await get_own_booking(session, booking_id, telegram_id, now)
-    if not can_client_change(booking, rules, now):
+    if not can_client_cancel(booking, rules, now):
         raise ChangeDeadlinePassedError
     booking.status = BookingStatus.CANCELLED_BY_CLIENT
     await session.commit()
@@ -248,25 +308,33 @@ async def reschedule_booking(
     rules: BookingRules,
     now: datetime,
     reminders: Reminders = Reminders(),
+    spa: SpaConfig | None = None,
 ) -> Booking:
     """Переносить запис до того ж майстра на новий час.
 
     Як і при створенні, слот перевіряється в межах однієї транзакції після
-    блокування майстра. Власний запис клієнта слот не займає.
+    блокування майстра. Власний запис клієнта слот не займає. Ресурси спа
+    (кабінети, термальна зона) переносяться разом із записом і теж перевіряються.
     """
     await session.commit()
     try:
         booking = await get_own_booking(session, booking_id, telegram_id, now)
-        if not can_client_change(booking, rules, now):
+        if not can_client_change(booking, rules, now) or booking.deposit_pending:
             raise ChangeDeadlinePassedError
         if not is_within_horizon(new_start.astimezone(rules.tz).date(), rules, now):
             raise SlotUnavailableError
 
-        await _lock_masters(session, [booking.master_id])
+        if spa_service.is_event(spa, booking.service.name):
+            raise SlotUnavailableError  # групова подія має фіксовану дату
+        if booking.resources:
+            await _lock_all_masters(session)
+        else:
+            await _lock_masters(session, [booking.master_id])
         # Після блокування перечитуємо запис: його могли скасувати паралельно
         booking = await get_own_booking(session, booking_id, telegram_id, now)
         # Тривалість — самого запису (вона могла залежати від розміру тварини)
         duration = booking.duration_min
+        plan = spa_service.plan_from_booking(booking)
         if not await slots.is_slot_available(
             session,
             master_id=booking.master_id,
@@ -276,9 +344,14 @@ async def reschedule_booking(
             now=now,
             exclude_booking_id=booking.id,
             duration_min=duration,
+            resources=spa_service.resource_filter(spa, plan),
         ):
             raise SlotUnavailableError
 
+        shift = new_start - booking.start_dt
+        for row in booking.resources:
+            row.start_dt += shift
+            row.end_dt += shift
         booking.start_dt = new_start
         booking.end_dt = new_start + timedelta(minutes=duration)
         # Новий час — нагадування плануються заново, підтвердження клієнта скидається
@@ -300,3 +373,114 @@ async def confirm_attendance(
         booking.client_confirmed_at = now
         await session.commit()
     return booking
+
+
+# --- Групові події й аванс (спа) ----------------------------------------------
+
+
+async def create_event_booking(
+    session: AsyncSession,
+    *,
+    client: Client,
+    service: Service,
+    start: datetime,
+    capacity: int,
+    duration_min: int,
+    price: int,
+    rules: BookingRules,
+    now: datetime,
+    reminders: Reminders = Reminders(),
+    addons: Sequence[tuple[int, Offer]] = (),
+    extras: SpaExtras | None = None,
+) -> Booking:
+    """Записує на групову подію (місця, а не слот майстра).
+
+    Вільні місця перевіряються в межах однієї транзакції. EventFullError — місць
+    уже менше, ніж гостей; SlotUnavailableError — подія недоступна.
+    """
+    guests = extras.guests if extras and extras.guests else 1
+    if not is_within_horizon(start.astimezone(rules.tz).date(), rules, now) or start <= now:
+        raise SlotUnavailableError
+    await session.commit()
+    try:
+        candidates = [m.id for m in await slots.masters_for_service(session, service.id)]
+        if not candidates:
+            raise SlotUnavailableError
+        await _lock_masters(session, candidates)
+        if await spa_service.seats_taken(session, service.id, start) + guests > capacity:
+            raise EventFullError
+        booking = Booking(
+            client_id=client.id,
+            master_id=candidates[0],
+            service_id=service.id,
+            start_dt=start,
+            end_dt=start + timedelta(minutes=duration_min),
+            created_at=now,
+            price=price,
+            addons=[
+                BookingAddon(
+                    service_id=service_id, price=offer.price, price_from=offer.price_from,
+                    duration_min=offer.duration_min,
+                )
+                for service_id, offer in addons
+            ],
+        )
+        _apply_extras(booking, extras, now)
+        _plan_reminders(booking, now, reminders)
+        session.add(booking)
+        await session.commit()
+    except BaseException:
+        await session.rollback()
+        raise
+    return booking
+
+
+async def pay_deposit(
+    session: AsyncSession, *, booking_id: int, now: datetime, telegram_id: int | None = None
+) -> Booking:
+    """Позначає аванс внесеним: бронювання підтверджене.
+
+    `telegram_id` — клієнт сам оплатив (демо-оплата): лише власний запис.
+    Без нього — адміністратор підтвердив, що аванс отримано.
+    BookingNotFoundError — запису немає, він скасований, минув або аванс не потрібен.
+    """
+    query = select(Booking).where(
+        Booking.id == booking_id,
+        Booking.status == BookingStatus.CONFIRMED,
+        Booking.start_dt > now,
+        Booking.deposit.is_not(None),
+    )
+    if telegram_id is not None:
+        query = query.join(Client, Client.id == Booking.client_id).where(
+            Client.telegram_id == telegram_id
+        )
+    booking = await session.scalar(
+        query.options(*booking_details()).execution_options(populate_existing=True)
+    )
+    if booking is None:
+        raise BookingNotFoundError
+    if booking.deposit_paid_at is None:
+        booking.deposit_paid_at = now
+        booking.hold_until = None
+        await session.commit()
+    return booking
+
+
+async def expire_unpaid(session: AsyncSession, now: datetime) -> list[Booking]:
+    """Скасовує бронювання, за які не внесли аванс вчасно. Повертає скасовані."""
+    result = await session.scalars(
+        select(Booking)
+        .where(
+            Booking.status == BookingStatus.CONFIRMED,
+            Booking.deposit.is_not(None),
+            Booking.deposit_paid_at.is_(None),
+            Booking.hold_until <= now,
+        )
+        .options(*booking_details())
+    )
+    expired = list(result.all())
+    for booking in expired:
+        booking.status = BookingStatus.EXPIRED
+    if expired:
+        await session.commit()
+    return expired

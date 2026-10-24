@@ -30,11 +30,13 @@ from bot.keyboards.main_menu import main_menu_kb
 from bot.services import booking as booking_service
 from bot.services import notifications, slots
 from bot.services import pets as pets_service
+from bot.services import spa as spa_service
 from bot.services.booking import SlotUnavailableError
 from bot.services.formatting import (
     booking_done_text,
     booking_summary,
     contacts_text,
+    deposit_confirm_text,
     progress_text,
     summary_of,
 )
@@ -46,6 +48,12 @@ router = Router(name="client")
 Event = Message | CallbackQuery
 
 
+def menu_kb(settings: Settings, business: BusinessConfig):
+    """Головне меню; у спа — ще «Сертифікати» й «Правила відвідування»."""
+    extra = [texts.BTN_CERTIFICATE, texts.BTN_RULES] if business.spa is not None else []
+    return main_menu_kb(settings.demo_mode, extra)
+
+
 @router.message(CommandStart())
 async def cmd_start(
     message: Message, business: BusinessConfig, state: FSMContext, settings: Settings
@@ -53,7 +61,7 @@ async def cmd_start(
     await state.clear()
     await message.answer(
         texts.WELCOME.format(name=html.quote(business.business.name)),
-        reply_markup=main_menu_kb(settings.demo_mode),
+        reply_markup=menu_kb(settings, business),
     )
 
 
@@ -80,6 +88,12 @@ async def _moving_booking_id(state: FSMContext) -> int | None:
     return (await state.get_data()).get("booking_id")
 
 
+def _resources(data: dict, business: BusinessConfig) -> spa_service.ResourceFilter | None:
+    """Ресурси спа (кабінети, термальна зона), які займе запис, — для фільтра слотів."""
+    plan = data.get("resource_plan")
+    return spa_service.resource_filter(business.spa, spa_service.plan_from_data(plan) if plan else None)
+
+
 async def _load_choice(session: AsyncSession, state: FSMContext) -> tuple[Service, int | None]:
     data = await state.get_data()
     service = await session.get(Service, data["service_id"])
@@ -103,12 +117,15 @@ async def _progress(
     data = await state.get_data()
     master_id = data.get("master_id")
     master = await session.get(Master, master_id) if "master" in done and master_id else None
+    service = await session.get(Service, data["service_id"]) if "service" in done else None
+    # Послуга без майстра (спа: відпочинок у термальній зоні) — майстра в підсумку не показуємо
+    staffless = service is not None and spa_service.is_staffless(business.spa, service.name)
     return progress_text(
         prompt,
         pet_name=data.get("pet_name"),
-        service=await session.get(Service, data["service_id"]) if "service" in done else None,
+        service=service,
         master_name=master.name if master else None,
-        any_master="master" in done and master_id is None,
+        any_master="master" in done and master_id is None and not staffless,
         day=date.fromisoformat(data["day"]) if "day" in done else None,
         start=datetime.fromisoformat(data["start"]) if "start" in done else None,
         tz=business.booking.tz,
@@ -160,9 +177,11 @@ async def show_dates(
     service, master_id = await _load_choice(session, state)
     moving_id = await _moving_booking_id(state)
     rules = business.booking
+    data = await state.get_data()
     dates = await slots.get_available_dates(
         session, service=service, master_id=master_id, rules=rules, now=utcnow(),
-        exclude_booking_id=moving_id, duration_min=(await state.get_data()).get("duration_min"),
+        exclude_booking_id=moving_id, duration_min=data.get("duration_min"),
+        resources=_resources(data, business),
     )
     await state.set_state(RescheduleStates.date if moving_id else BookingStates.date)
     if not dates:
@@ -182,9 +201,11 @@ async def _free_starts(
     business: BusinessConfig,
     exclude_booking_id: int | None,
     duration_min: int | None,
+    resources: spa_service.ResourceFilter | None = None,
 ) -> list[datetime]:
     common = dict(
-        service=service, day=day, rules=business.booking, now=utcnow(), duration_min=duration_min
+        service=service, day=day, rules=business.booking, now=utcnow(), duration_min=duration_min,
+        resources=resources,
     )
     if master_id is None:
         return list(await slots.get_free_slots_any_master(session, **common))
@@ -205,7 +226,8 @@ async def show_times(
     data = await state.get_data()
     day = date.fromisoformat(data["day"])
     starts = await _free_starts(
-        session, service, master_id, day, business, moving_id, data.get("duration_min")
+        session, service, master_id, day, business, moving_id, data.get("duration_min"),
+        _resources(data, business),
     )
     if not starts:
         # Поки клієнт обирав, вільний час на цю дату закінчився
@@ -227,9 +249,13 @@ async def show_confirm(
     start = datetime.fromisoformat(data["start"])
     master = await session.get(Master, master_id) if master_id else None
     pet = await session.get(Pet, data["pet_id"]) if data.get("pet_id") else None
-    addons = await pets_service.selected_addons(
-        session, data.get("addon_ids", []), data.get("pet_category"), business.pets
-    )
+    if business.spa is not None:
+        addon_names = [(await session.get(Service, i)).name for i in data.get("addon_ids", [])]
+    else:
+        addons = await pets_service.selected_addons(
+            session, data.get("addon_ids", []), data.get("pet_category"), business.pets
+        )
+        addon_names = [addon.name for addon, _ in addons]
     summary = booking_summary(
         service=service,
         master_name=master.name if master else None,
@@ -240,10 +266,16 @@ async def show_confirm(
         pet=pet,
         pets=business.pets,
         price_from=data.get("price_from", False),
-        addon_names=[addon.name for addon, _ in addons],
+        addon_names=addon_names,
+        guests_details=data.get("guests_details"),
+        hide_master=spa_service.is_staffless(business.spa, service.name),
     )
+    text = texts.CONFIRM.format(summary=summary)
+    if data.get("deposit"):
+        # Аванс і коротко правила — до оплати
+        text += deposit_confirm_text(data["deposit"], business.spa)
     await state.set_state(BookingStates.confirm)
-    await _render(event, texts.CONFIRM.format(summary=summary), kb.confirm_kb())
+    await _render(event, text, kb.confirm_kb())
 
 
 # --- Кроки запису -------------------------------------------------------------
@@ -316,7 +348,13 @@ async def pick_time(
 ) -> None:
     start = datetime.fromtimestamp(callback_data.ts, tz=UTC)
     await state.update_data(start=start.isoformat())
+    await ask_phone_or_confirm(callback, state, session, business)
 
+
+async def ask_phone_or_confirm(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession, business: BusinessConfig
+) -> None:
+    """Після вибору часу: телефон (якщо ще не знаємо) або одразу підтвердження."""
     client = await booking_service.get_client(session, callback.from_user.id)
     if client is not None and client.phone:
         await show_confirm(callback, state, session, business)
@@ -348,7 +386,7 @@ async def _phone_received(
     await booking_service.save_client_phone(
         session, message.from_user.id, message.from_user.full_name, phone
     )
-    await message.answer(texts.PHONE_SAVED, reply_markup=main_menu_kb(settings.demo_mode))
+    await message.answer(texts.PHONE_SAVED, reply_markup=menu_kb(settings, business))
     await show_confirm(message, state, session, business)
 
 
@@ -357,7 +395,7 @@ async def phone_back(
     message: Message, state: FSMContext, session: AsyncSession, business: BusinessConfig,
     settings: Settings,
 ) -> None:
-    await message.answer(texts.BACK_TO_TIMES, reply_markup=main_menu_kb(settings.demo_mode))
+    await message.answer(texts.BACK_TO_TIMES, reply_markup=menu_kb(settings, business))
     await show_times(message, state, session, business)
 
 
@@ -435,7 +473,10 @@ async def noop(callback: CallbackQuery) -> None:
 
 def _not_menu_button(text: str) -> bool:
     """Текст кнопки головного меню — не кличка (меню видно під час введення)."""
-    return text not in {texts.BTN_BOOK, texts.BTN_MY_BOOKINGS, texts.BTN_CONTACTS, texts.BTN_DEMO_OWNER}
+    return text not in {
+        texts.BTN_BOOK, texts.BTN_MY_BOOKINGS, texts.BTN_CONTACTS, texts.BTN_DEMO_OWNER,
+        texts.BTN_CERTIFICATE, texts.BTN_RULES,
+    }
 
 
 async def show_pets(

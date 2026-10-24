@@ -90,8 +90,19 @@ def week_kb(days: Sequence[tuple[date, int]]) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def deposit_kb(booking_id: int) -> InlineKeyboardMarkup:
+    """У сповіщенні про бронювання, що чекає на аванс: «Аванс отримано» / «Скасувати»."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text=texts.BTN_DEPOSIT_RECEIVED, callback_data=_cb("dep_ok", booking_id))
+    builder.button(text=texts.BTN_ADMIN_CANCEL, callback_data=_cb("bk_cancel", booking_id))
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def booking_kb(booking: Booking, tz: ZoneInfo, *, can_mark: bool, can_cancel: bool) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    if can_cancel and booking.deposit_pending:
+        builder.button(text=texts.BTN_DEPOSIT_RECEIVED, callback_data=_cb("dep_ok", booking.id))
     if can_mark:
         builder.button(text=texts.BTN_MARK_COMPLETED, callback_data=_cb("bk_done", booking.id))
         builder.button(text=texts.BTN_MARK_NO_SHOW, callback_data=_cb("bk_noshow", booking.id))

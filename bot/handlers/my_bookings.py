@@ -15,13 +15,14 @@ from bot.keyboards import booking as kb
 from bot.keyboards.callbacks import MyBookingCb, NavCb, TimeCb
 from bot.services import booking as booking_service
 from bot.services import notifications
+from bot.services import spa as spa_service
 from bot.services.reminders import reminder_text
 from bot.services.booking import (
     BookingNotFoundError,
     ChangeDeadlinePassedError,
     SlotUnavailableError,
 )
-from bot.services.formatting import booking_moved_text, fmt_when, summary_of
+from bot.services.formatting import booking_moved_text, deposit_paid_text, fmt_when, summary_of
 from bot.states import RescheduleStates
 
 router = Router(name="my_bookings")
@@ -32,20 +33,31 @@ def _summary(booking: Booking, business: BusinessConfig) -> str:
 
 
 def _card(
-    booking: Booking, business: BusinessConfig, now: datetime
+    booking: Booking, business: BusinessConfig, now: datetime, demo_mode: bool = False
 ) -> tuple[str, InlineKeyboardMarkup | None]:
-    """Картка запису: кнопки скасування й перенесення або телефон, якщо дедлайн минув."""
+    """Картка запису: кнопки скасування й перенесення або телефон, якщо дедлайн минув.
+
+    Бронювання без авансу — «Оплатити» (у демо) і «Скасувати»; групову подію
+    перенести не можна (фіксована дата).
+    """
     summary = _summary(booking, business)
+    if booking.deposit_pending:
+        return summary, kb.booking_card_kb(
+            booking.id, can_move=False, pay_amount=booking.deposit if demo_mode else None
+        )
     if booking_service.can_client_change(booking, business.booking, now):
-        return summary, kb.booking_card_kb(booking.id)
+        can_move = not spa_service.is_event(business.spa, booking.service.name)
+        return summary, kb.booking_card_kb(booking.id, can_move=can_move)
     note = texts.CHANGE_DEADLINE_PASSED.format(
-        hours=business.booking.cancel_deadline_hours, phone=business.business.phone
+        hours=booking_service.change_deadline_hours(booking, business.booking),
+        phone=business.business.phone,
     )
     return f"{summary}\n\n{note}", None
 
 
 async def _show_card(
-    callback: CallbackQuery, booking_id: int, session: AsyncSession, business: BusinessConfig
+    callback: CallbackQuery, booking_id: int, session: AsyncSession, business: BusinessConfig,
+    demo_mode: bool = False,
 ) -> None:
     now = utcnow()
     try:
@@ -55,13 +67,14 @@ async def _show_card(
     except BookingNotFoundError:
         await callback.message.edit_text(texts.BOOKING_GONE)
         return
-    text, markup = _card(booking, business, now)
+    text, markup = _card(booking, business, now, demo_mode)
     await callback.message.edit_text(text, reply_markup=markup)
 
 
 @router.message(F.text == texts.BTN_MY_BOOKINGS)
 async def my_bookings(
-    message: Message, state: FSMContext, session: AsyncSession, business: BusinessConfig
+    message: Message, state: FSMContext, session: AsyncSession, business: BusinessConfig,
+    settings: Settings,
 ) -> None:
     await state.clear()
     now = utcnow()
@@ -71,7 +84,7 @@ async def my_bookings(
         return
     await message.answer(texts.MY_BOOKINGS_HEADER.format(count=len(bookings)))
     for booking in bookings:
-        text, markup = _card(booking, business, now)
+        text, markup = _card(booking, business, now, settings.demo_mode)
         await message.answer(text, reply_markup=markup)
 
 
@@ -97,6 +110,44 @@ async def confirm_attendance(
     await callback.message.edit_text(f"{text}\n\n{texts.ATTENDANCE_CONFIRMED}", reply_markup=markup)
 
 
+# --- Аванс (демо-оплата) -------------------------------------------------------
+
+
+@router.callback_query(MyBookingCb.filter(F.action == "pay"))
+async def pay_deposit(
+    callback: CallbackQuery, callback_data: MyBookingCb, session: AsyncSession,
+    business: BusinessConfig, bot: Bot, settings: Settings,
+) -> None:
+    """Кнопка «Оплатити аванс (ДЕМО)» імітує оплату. У робочому боті її немає:
+    аванс підтверджує адміністратор (або платіжний сервіс, див. README)."""
+    if not settings.demo_mode:
+        await _show_card(callback, callback_data.booking_id, session, business)
+        return
+    now = utcnow()
+    try:
+        booking = await booking_service.pay_deposit(
+            session, booking_id=callback_data.booking_id, now=now, telegram_id=callback.from_user.id
+        )
+    except BookingNotFoundError:
+        await callback.message.edit_text(texts.BOOKING_GONE)
+        return
+    reminders = booking_service.planned_reminders(
+        booking.start_dt, booking.created_at, business.reminders
+    )
+    await callback.message.edit_text(
+        deposit_paid_text(
+            summary=_summary(booking, business), address=business.business.address,
+            reminders=reminders, demo_mode=True,
+        )
+    )
+    owner_text = await notifications.notify_staff(
+        bot, session, booking_id=booking.id, template=texts.NOTIFY_DEPOSIT_PAID,
+        admin_ids=settings.admin_ids, business=business,
+        demo_mode=settings.demo_mode, actor_id=callback.from_user.id,
+    )
+    await callback.message.answer(texts.DEMO_OWNER_VIEW.format(notification=owner_text))
+
+
 # --- Скасування ---------------------------------------------------------------
 
 
@@ -113,7 +164,7 @@ async def ask_cancel(
     except BookingNotFoundError:
         await callback.message.edit_text(texts.BOOKING_GONE)
         return
-    if not booking_service.can_client_change(booking, business.booking, now):
+    if not booking_service.can_client_cancel(booking, business.booking, now):
         await _show_card(callback, booking.id, session, business)
         return
     await callback.message.edit_text(
@@ -172,7 +223,11 @@ async def start_move(
     except BookingNotFoundError:
         await callback.message.edit_text(texts.BOOKING_GONE)
         return
-    if not booking_service.can_client_change(booking, business.booking, now):
+    if (
+        not booking_service.can_client_change(booking, business.booking, now)
+        or booking.deposit_pending
+        or spa_service.is_event(business.spa, booking.service.name)
+    ):
         await _show_card(callback, booking.id, session, business)
         return
     # Ті самі послуга й майстер; кроки дати й часу — спільні зі сценарієм запису
@@ -185,6 +240,8 @@ async def start_move(
             "old_start": booking.start_dt.isoformat(),
             # Тривалість — самого запису (могла залежати від розміру тварини)
             "duration_min": booking.duration_min,
+            # Ресурси спа (кабінети, термальна зона) переносяться разом із записом
+            "resource_plan": spa_service.plan_to_data(spa_service.plan_from_booking(booking)),
         }
     )
     await show_dates(callback, state, session, business)
@@ -251,7 +308,7 @@ async def do_move(
         booking = await booking_service.reschedule_booking(
             session, booking_id=data["booking_id"], telegram_id=callback.from_user.id,
             new_start=datetime.fromisoformat(data["start"]), rules=business.booking, now=now,
-            reminders=business.reminders,
+            reminders=business.reminders, spa=business.spa,
         )
     except SlotUnavailableError:
         await show_times(callback, state, session, business, notice=texts.SLOT_TAKEN)

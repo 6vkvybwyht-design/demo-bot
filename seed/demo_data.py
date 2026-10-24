@@ -18,6 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.config import BASE_DIR, BaseAppSettings, BusinessConfig, DemoData, load_business_config
 from bot.db.models import (
     Booking,
+    BookingAddon,
+    BookingResource,
     BookingStatus,
     Client,
     FsmState,
@@ -29,8 +31,9 @@ from bot.db.models import (
     WorkingHours,
 )
 from bot.db.session import create_engine, create_session_factory
+from bot.services import spa as spa_service
 from bot.services.demo import DEMO_CLIENT_TG_BASE  # вигадані Telegram ID демо-клієнтів
-from bot.services.pets import offer_for
+from bot.services.pets import Offer, offer_for
 
 @dataclass
 class SeedSummary:
@@ -45,7 +48,8 @@ async def clear_all(session: AsyncSession) -> None:
     # Порядок важливий через зовнішні ключі
     # FsmState — незавершені діалоги посилаються на дані, яких після скидання не буде
     for model in (
-        FsmState, Booking, Pet, TimeOff, WorkingHours, MasterService, Client, Master, Service
+        FsmState, BookingResource, BookingAddon, Booking, Pet, TimeOff, WorkingHours,
+        MasterService, Client, Master, Service,
     ):
         await session.execute(delete(model))
 
@@ -56,7 +60,8 @@ def _local_dt(day: date, at: time, business: BusinessConfig) -> datetime:
 
 def _fits(start: datetime, end: datetime, day: date, schedule, business: BusinessConfig) -> bool:
     """Запис у межах робочого дня й не заходить на перерву."""
-    if start < _local_dt(day, schedule.start, business) or end > _local_dt(day, schedule.end, business):
+    day_start, day_end = schedule.hours_for(day.weekday())
+    if start < _local_dt(day, day_start, business) or end > _local_dt(day, day_end, business):
         return False
     if schedule.break_start is None:
         return True
@@ -76,6 +81,37 @@ def _service_for(
         return fallback
     fitting = [s for s in master.services if s.duration_min <= wanted.duration_min]
     return max(fitting, key=lambda s: s.duration_min, default=None)
+
+
+def _event_bookings(
+    spa, services: dict[str, Service], masters: dict[str, Master], clients: list[Client],
+    demo: DemoData, business: BusinessConfig, now: datetime,
+) -> list[Booking]:
+    """Спа: зайняті місця на найближчі дати групових подій (demo.event_seats по черзі)."""
+    result = []
+    for service in services.values():
+        cfg = spa.service(service.name)
+        master = next((m for m in masters.values() if service in m.services), None)
+        if cfg is None or cfg.event is None or master is None:
+            continue
+        starts = spa_service.event_starts(cfg, business.booking, now)
+        for i, (start, seats) in enumerate(zip(starts, demo.event_seats)):
+            seats = min(seats, cfg.event.capacity)
+            if seats <= 0:
+                continue
+            counts = {cfg.guests.kinds[0].key: seats}
+            quote = spa_service.quote(spa, service, counts=counts)
+            result.append(
+                Booking(
+                    client=clients[i % len(clients)], master=master, service=service,
+                    start_dt=start, end_dt=start + timedelta(minutes=quote.duration_min),
+                    price=quote.price, guests=quote.guests, guests_details=quote.guests_details,
+                    deposit=quote.deposit, deposit_paid_at=now if quote.deposit else None,
+                    status=BookingStatus.CONFIRMED, created_at=now,
+                    reminded_24h=True, reminded_2h=True,
+                )
+            )
+    return result
 
 
 async def reset_demo_data(
@@ -103,8 +139,8 @@ async def reset_demo_data(
         master.working_hours = [
             WorkingHours(
                 weekday=weekday,
-                start_time=schedule.start,
-                end_time=schedule.end,
+                start_time=schedule.hours_for(weekday)[0],
+                end_time=schedule.hours_for(weekday)[1],
                 break_start=schedule.break_start,
                 break_end=schedule.break_end,
             )
@@ -145,23 +181,31 @@ async def reset_demo_data(
     bookings: list[Booking] = []
     busy: dict[str, list[tuple[datetime, datetime]]] = {name: [] for name in masters}
     patterns = demo.booking_patterns
+    spa = business.spa
+    occupied: list[spa_service.Occupied] = []  # ресурси спа вже створених демо-записів
     for offset in range(demo.booking_days):
         day = today + timedelta(days=offset)
         if day.weekday() not in schedule.weekdays:
             continue
+        day_blocks = spa_service.event_blocks(spa, day, business.booking) if spa else []
         for m_idx, (master_name, master) in enumerate(masters.items()):
             for slot in patterns[(offset + m_idx) % len(patterns)] if patterns else []:
                 service = _service_for(master, services[slot.service], services, demo)
-                if service is None:
+                if service is None or spa_service.is_event(spa, service.name):
                     continue
+                quote = spa_service.quote(spa, service) if spa else None
                 # Клієнт по колу; якщо його тварині послуга не підходить (кіт і стрижка
                 # пса) — наступний, чия тварина підходить
                 client, pet, offer = None, None, None
                 for shift in range(len(clients)):
                     candidate = clients[(len(bookings) + shift) % len(clients)]
                     candidate_pet = pets.get(candidate.id)
-                    candidate_offer = offer_for(
-                        service, candidate_pet.category if candidate_pet else None, business.pets
+                    candidate_offer = (
+                        Offer(quote.duration_min, quote.price)
+                        if quote
+                        else offer_for(
+                            service, candidate_pet.category if candidate_pet else None, business.pets
+                        )
                     )
                     if candidate_offer is not None:
                         client, pet, offer = candidate, candidate_pet, candidate_offer
@@ -175,9 +219,29 @@ async def reset_demo_data(
                 ) or any(t.master is master and start < t.end_dt and t.start_dt < end for t in time_off):
                     # Довша за шаблон послуга (великий пес) не вмістилася — пропускаємо
                     continue
+                if quote and not spa_service.fits_resources(
+                    quote.plan, start, occupied + day_blocks, spa, business.booking
+                ):
+                    # Спа: кабінети чи термальна зона в цей час уже зайняті
+                    continue
                 busy[master_name].append((start, end))
+                extra = {}
+                if quote:
+                    occupied += [
+                        spa_service.Occupied(r.resource, r.units, r.start_dt, r.end_dt)
+                        for r in spa_service.resource_rows(quote.plan, start)
+                    ]
+                    extra = dict(
+                        resources=spa_service.resource_rows(quote.plan, start),
+                        guests=quote.guests,
+                        guests_details=quote.guests_details,
+                        # Демо-записи — з уже внесеним авансом
+                        deposit=quote.deposit,
+                        deposit_paid_at=now if quote.deposit else None,
+                    )
                 bookings.append(
                     Booking(
+                        **extra,
                         client=client,
                         pet=pet,
                         price=offer.price,
@@ -193,6 +257,8 @@ async def reset_demo_data(
                         reminded_2h=True,
                     )
                 )
+    if spa is not None:
+        bookings += _event_bookings(spa, services, masters, clients, demo, business, now)
     session.add_all(bookings)
     await session.flush()
 

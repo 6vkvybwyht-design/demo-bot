@@ -25,10 +25,11 @@ from bot import texts
 from bot.db.fsm_storage import DbStorage
 from bot.db.models import utcnow
 from bot.db.session import create_engine, create_session_factory
-from bot.handlers import admin, client, fallback, my_bookings
+from bot.handlers import admin, client, fallback, my_bookings, spa
 from bot.middlewares.db import DbSessionMiddleware
 from bot.services.demo import ensure_demo_data, reset_demo
 from bot.services.backup import ensure_recent_backup, run_backup
+from bot.services.deposits import expire_unpaid_bookings
 from bot.services.reminders import send_due_reminders
 
 
@@ -46,7 +47,8 @@ def create_scheduler(
     settings: BaseAppSettings | None = None,
 ) -> AsyncIOScheduler:
     """Щохвилинна перевірка нагадувань (перший запуск — одразу після старту),
-    щоденний бекап бази о 03:30 і, в демо-режимі, нічне скидання даних о 04:00."""
+    щоденний бекап бази о 03:30 і, в демо-режимі, нічне скидання даних о 04:00.
+    Для спа — щохвилинне автоскасування бронювань без авансу."""
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_job(
         send_due_reminders,
@@ -58,6 +60,23 @@ def create_scheduler(
         coalesce=True,  # пропущені запуски (бот «спав») зливаються в один
         next_run_time=utcnow(),
     )
+    if business.spa is not None:
+        scheduler.add_job(
+            expire_unpaid_bookings,
+            "interval",
+            minutes=1,
+            kwargs={
+                "bot": bot,
+                "session_factory": session_factory,
+                "business": business,
+                "admin_ids": settings.admin_ids if settings is not None else [],
+                "demo_mode": demo_mode,
+            },
+            id="expire_unpaid",
+            max_instances=1,
+            coalesce=True,
+            next_run_time=utcnow(),
+        )
     if settings is not None:
         scheduler.add_job(
             run_backup,
@@ -102,6 +121,7 @@ def create_dispatcher(
     dp.update.outer_middleware(DbSessionMiddleware(session_factory))
     # Автоматично прибирає «годинник» на натиснутій inline-кнопці
     dp.callback_query.middleware(CallbackAnswerMiddleware())
+    dp.include_router(spa.router)  # лише для профілю зі spa; перед client — свої кроки запису
     dp.include_router(client.router)
     dp.include_router(my_bookings.router)
     dp.include_router(admin.router)

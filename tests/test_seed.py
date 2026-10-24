@@ -8,11 +8,12 @@ from sqlalchemy.orm import selectinload
 
 from bot.config import list_profiles, load_business_config, profile_path
 from bot.db.models import Booking, BookingStatus, Client, Master, Service, TimeOff, WorkingHours
+from bot.services import spa as spa_service
 from seed.demo_data import reset_demo_data
 
 # Середа; наступні 7 днів захоплюють перехід Києва на зимовий час (25.10.2026)
 NOW = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
-PROFILES = ["barber", "groom", "nails"]
+PROFILES = ["barber", "groom", "nails", "spa"]
 
 
 @pytest.fixture(params=PROFILES)
@@ -58,7 +59,11 @@ async def test_seed_bookings_are_realistic(session, profile):
     tz = profile.booking.tz
     step = profile.booking.slot_step_min
     schedule = profile.demo.schedule
-    bookings = (await session.scalars(select(Booking).order_by(Booking.start_dt))).all()
+    bookings = (
+        await session.scalars(
+            select(Booking).options(selectinload(Booking.service)).order_by(Booking.start_dt)
+        )
+    ).all()
     time_off = (await session.scalars(select(TimeOff))).all()
     # Зв'язки завантажуємо явно: ліниве довантаження в async-сесії не працює
     masters = await session.scalars(select(Master).options(selectinload(Master.services)))
@@ -69,8 +74,10 @@ async def test_seed_bookings_are_realistic(session, profile):
         start, end = b.start_dt.astimezone(tz), b.end_dt.astimezone(tz)
         assert start.date() == end.date()
         assert start.weekday() in schedule.weekdays, "запис у вихідний"
-        assert schedule.start <= start.time() and end.time() <= schedule.end
-        assert end.time() <= schedule.break_start or start.time() >= schedule.break_end, "запис у перерву"
+        day_start, day_end = schedule.hours_for(start.weekday())
+        assert day_start <= start.time() and end.time() <= day_end
+        if schedule.break_start is not None:
+            assert end.time() <= schedule.break_start or start.time() >= schedule.break_end, "запис у перерву"
         assert start.minute % step == 0
         assert b.service_id in services_by_master[b.master_id]
         assert not any(
@@ -79,7 +86,9 @@ async def test_seed_bookings_are_realistic(session, profile):
         )
         expected = BookingStatus.COMPLETED if b.end_dt <= NOW else BookingStatus.CONFIRMED
         assert b.status is expected
-        by_master.setdefault(b.master_id, []).append(b)
+        # Учасники групової події (спа) записані на той самий час — це не перетин
+        if not spa_service.is_event(profile.spa, b.service.name):
+            by_master.setdefault(b.master_id, []).append(b)
 
     for items in by_master.values():
         for prev, nxt in zip(items, items[1:]):
@@ -88,7 +97,8 @@ async def test_seed_bookings_are_realistic(session, profile):
     # Після переходу на зимовий час графік — за київським часом, а не зсунутий на годину
     after_dst = [b for b in bookings if b.start_dt.astimezone(tz).date().day == 26]
     assert after_dst
-    assert min(b.start_dt.astimezone(tz).time() for b in after_dst) >= schedule.start
+    first_after_dst = min(b.start_dt.astimezone(tz) for b in after_dst)
+    assert first_after_dst.time() >= schedule.hours_for(first_after_dst.weekday())[0]
 
 
 async def test_every_master_gets_bookings(session, profile):

@@ -67,7 +67,10 @@ def decide(booking: Booking, now: datetime, config: Reminders) -> Decision:
 
 
 async def pending_bookings(session: AsyncSession, now: datetime) -> list[Booking]:
-    """Підтверджені записи в найближчі 24 год, що ще не почалися й мають невідправлені нагадування."""
+    """Підтверджені записи в найближчі 24 год, що ще не почалися й мають невідправлені нагадування.
+
+    Бронювання, що чекають на аванс, пропускаємо: вони ще не підтверджені.
+    """
     result = await session.scalars(
         select(Booking)
         .where(
@@ -75,6 +78,7 @@ async def pending_bookings(session: AsyncSession, now: datetime) -> list[Booking
             Booking.start_dt > now,
             Booking.start_dt <= now + BEFORE_24H,
             or_(Booking.reminded_24h.is_(False), Booking.reminded_2h.is_(False)),
+            or_(Booking.deposit.is_(None), Booking.deposit_paid_at.is_not(None)),
         )
         .options(*booking_details())
         .order_by(Booking.start_dt)

@@ -96,6 +96,9 @@ class BookingRules(BaseModel):
     horizon_days: int = Field(default=14, gt=0)
     min_lead_time_min: int = Field(default=60, ge=0)
     cancel_deadline_hours: int = Field(default=2, ge=0)
+    # Дедлайн для бронювань із внесеним авансом (спа: перенесення за 48 год).
+    # None — як cancel_deadline_hours
+    deposit_deadline_hours: int | None = Field(default=None, ge=0)
 
     @field_validator("timezone")
     @classmethod
@@ -139,24 +142,51 @@ class DemoMaster(BaseModel):
     services: list[str]  # ключі послуг
 
 
+class DayHours(BaseModel):
+    """Години роботи на певні дні тижня (0 — понеділок)."""
+
+    weekdays: list[int]
+    start: YamlTime
+    end: YamlTime
+
+    @model_validator(mode="after")
+    def _check(self) -> "DayHours":
+        if not all(0 <= wd <= 6 for wd in self.weekdays):
+            raise ValueError("weekdays: дні тижня від 0 (Пн) до 6 (Нд)")
+        if self.start >= self.end:
+            raise ValueError("графік: початок має бути раніше за кінець")
+        return self
+
+
 class DemoSchedule(BaseModel):
     weekdays: list[int]  # 0 — понеділок
     start: YamlTime
     end: YamlTime
     break_start: YamlTime | None = None
     break_end: YamlTime | None = None
+    # Інші години на окремі дні (наприклад, у понеділок з 13:00). Перерва — та сама
+    overrides: list[DayHours] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check(self) -> "DemoSchedule":
         if not all(0 <= wd <= 6 for wd in self.weekdays):
             raise ValueError("weekdays: дні тижня від 0 (Пн) до 6 (Нд)")
-        if self.start >= self.end:
-            raise ValueError("графік: початок має бути раніше за кінець")
         if (self.break_start is None) != (self.break_end is None):
             raise ValueError("перерва: вкажіть і break_start, і break_end")
-        if self.break_start is not None and not (self.start < self.break_start < self.break_end < self.end):
-            raise ValueError("перерва має бути всередині робочого дня")
+        for weekday in self.weekdays:
+            start, end = self.hours_for(weekday)
+            if start >= end:
+                raise ValueError("графік: початок має бути раніше за кінець")
+            if self.break_start is not None and not (start < self.break_start < self.break_end < end):
+                raise ValueError("перерва має бути всередині робочого дня")
         return self
+
+    def hours_for(self, weekday: int) -> tuple[time, time]:
+        """Початок і кінець робочого дня (з урахуванням overrides)."""
+        for item in self.overrides:
+            if weekday in item.weekdays:
+                return item.start, item.end
+        return self.start, self.end
 
 
 class DemoPet(BaseModel):
@@ -199,6 +229,8 @@ class DemoData(BaseModel):
     # Чим замінити послугу шаблону, якщо майстер її не виконує (за замовчуванням —
     # найдовша з його послуг, що не довша за початкову, щоб запис вмістився)
     fallback_service: str | None = None
+    # Спа: скільки місць уже зайнято на найближчі дати групових подій (по черзі)
+    event_seats: list[int] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check_references(self) -> "DemoData":
@@ -365,6 +397,184 @@ def _prefixes(path: str) -> list[str]:
     return ["/".join(parts[: i + 1]) for i in range(len(parts))]
 
 
+# --- Спа: ресурси, гості, аванс, групові події ----------------------------------
+
+
+class SpaResource(BaseModel):
+    """Спільний ресурс: кабінети, термальна зона. Бронювання займають його одиниці."""
+
+    name: str
+    capacity: int = Field(ge=1)
+    cleanup_min: int = Field(default=0, ge=0)  # підготовка після кожного бронювання
+
+
+class ResourceUse(BaseModel):
+    """Яку частину бронювання послуга займає ресурс: увесь час (за замовчуванням),
+    лише останні N хв (масаж у кабінеті наприкінці хамаму) або N хв після завершення
+    (відпочинок у хамамі після масажу)."""
+
+    resource: str
+    units: int = Field(default=1, ge=1)
+    last_min: int | None = Field(default=None, gt=0)
+    after_min: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _check(self) -> "ResourceUse":
+        if self.last_min is not None and self.after_min is not None:
+            raise ValueError("ресурс: вкажіть або last_min, або after_min")
+        return self
+
+
+class SpaVariant(BaseModel):
+    duration_min: int = Field(gt=0)
+    price: int = Field(ge=0)
+
+
+class GuestKind(BaseModel):
+    """Вид гостей (дорослі, діти 8–13 років): ліміти й ціна понад включених у базову."""
+
+    key: str
+    label: str
+    min: int = Field(default=0, ge=0)
+    max: int = Field(ge=0)
+    included: int = Field(default=0, ge=0)  # скільки входить у базову ціну
+    price: int = Field(default=0, ge=0)  # за кожного понад включених
+    default: int | None = None  # початкова кількість (за замовчуванням — min)
+
+    @model_validator(mode="after")
+    def _check(self) -> "GuestKind":
+        if self.min > self.max:
+            raise ValueError(f"гості «{self.label}»: min більший за max")
+        if self.default is not None and not self.min <= self.default <= self.max:
+            raise ValueError(f"гості «{self.label}»: default поза межами min–max")
+        return self
+
+
+class SpaGuests(BaseModel):
+    kinds: list[GuestKind] = Field(min_length=1)
+    max_total: int | None = Field(default=None, ge=1)  # ліміт усіх гостей разом
+    # Ціна й тривалість за кількістю гостей першого виду: {3: 9500 грн / 150 хв}
+    tiers: dict[int, SpaVariant] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check(self) -> "SpaGuests":
+        keys = [k.key for k in self.kinds]
+        if len(set(keys)) != len(keys):
+            raise ValueError("гості: ключі видів мають бути унікальні")
+        first = self.kinds[0]
+        if self.tiers and set(self.tiers) != set(range(first.min, first.max + 1)):
+            raise ValueError(
+                f"гості: tiers потрібні для кожної кількості від {first.min} до {first.max}"
+            )
+        if self.max_total is not None and self.max_total < sum(k.min for k in self.kinds):
+            raise ValueError("гості: max_total менший за мінімальну кількість")
+        return self
+
+    @property
+    def fixed(self) -> bool:
+        """Кількість гостей не обирається (ритуал для двох)."""
+        return all(k.min == k.max for k in self.kinds)
+
+    def defaults(self) -> dict[str, int]:
+        return {k.key: k.min if k.default is None else k.default for k in self.kinds}
+
+
+class SpaEvent(BaseModel):
+    """Групова подія з фіксованим часом (відкритий банний вечір): місця, а не слоти."""
+
+    weekdays: list[int]
+    start: YamlTime
+    end: YamlTime
+    capacity: int = Field(ge=1)
+    blocks: list[str] = Field(default_factory=list)  # ресурси, повністю зайняті під час події
+
+    @model_validator(mode="after")
+    def _check(self) -> "SpaEvent":
+        if not all(0 <= wd <= 6 for wd in self.weekdays):
+            raise ValueError("подія: дні тижня від 0 (Пн) до 6 (Нд)")
+        if self.start >= self.end:
+            raise ValueError("подія: початок має бути раніше за кінець")
+        return self
+
+
+class SpaService(BaseModel):
+    """Налаштування послуги спа (прив'язка до послуги — за назвою, як у pets)."""
+
+    category: str | None = None  # розділ меню; None — лише додаткова послуга
+    short: str | None = None  # 1–2 речення під назвою
+    full: str | None = None  # «Детальніше»
+    variants: list[SpaVariant] = Field(default_factory=list)  # 60 хв / 90 хв
+    staff: bool = True  # False — без майстра (відпочинок у термальній зоні)
+    uses: list[ResourceUse] = Field(default_factory=list)
+    guests: SpaGuests | None = None
+    deposit: bool = False  # аванс обов'язковий
+    price_from: bool = False  # «від X грн», точну ціну підтвердить адміністратор
+    addons: list[str] = Field(default_factory=list)  # назви доступних додаткових послуг
+    event: SpaEvent | None = None
+    # Для додаткових послуг
+    addon: bool = False
+    extra_min: int = Field(default=0, ge=0)  # на скільки подовжує бронювання
+    group: str | None = None  # з однієї групи можна обрати лише одну
+
+
+class SpaCategory(BaseModel):
+    key: str
+    label: str
+
+
+class DepositRules(BaseModel):
+    percent: int = Field(default=50, gt=0, le=100)
+    hold_min: int = Field(default=30, gt=0)  # скільки тримаємо слот без авансу
+    rules: str  # коротко правила перед оплатою
+
+
+class SpaConfig(BaseModel):
+    """Спа-комплекс: розділи послуг, ресурси (кабінети, термальна зона), гості,
+    аванс і групові події. Тривалість і ціна — з варіантів або кількості гостей,
+    інакше з самої послуги (адмінка)."""
+
+    resources: dict[str, SpaResource]
+    opening_hours: list[DayHours]  # ресурси займаються лише в години роботи комплексу
+    categories: list[SpaCategory]
+    services: dict[str, SpaService]
+    deposit: DepositRules
+    visit_rules: str  # «Правила відвідування»
+    certificate_amounts: list[int] = Field(default_factory=lambda: [1000, 2000, 3000, 5000])
+
+    @model_validator(mode="after")
+    def _check(self) -> "SpaConfig":
+        categories = {c.key for c in self.categories}
+        for name, service in self.services.items():
+            uses = list(service.uses)
+            if service.event is not None:
+                uses += [ResourceUse(resource=r) for r in service.event.blocks]
+                if service.guests is None:
+                    raise ValueError(f"spa «{name}»: для події потрібні guests (ціна за місце)")
+            if unknown := {u.resource for u in uses} - set(self.resources):
+                raise ValueError(f"spa «{name}»: невідомі ресурси: {', '.join(sorted(unknown))}")
+            for use in uses:
+                if use.units > self.resources[use.resource].capacity:
+                    raise ValueError(f"spa «{name}»: ресурсу «{use.resource}» менше, ніж {use.units}")
+            if service.category is not None and service.category not in categories:
+                raise ValueError(f"spa «{name}»: невідомий розділ «{service.category}»")
+            if service.addon and service.category is not None:
+                raise ValueError(f"spa «{name}»: додаткова послуга не має розділу")
+            for addon in service.addons:
+                if addon not in self.services or not self.services[addon].addon:
+                    raise ValueError(f"spa «{name}»: «{addon}» — не додаткова послуга з розділу spa")
+        return self
+
+    def service(self, name: str) -> SpaService | None:
+        return self.services.get(name)
+
+    def category(self, key: str) -> SpaCategory | None:
+        return next((c for c in self.categories if c.key == key), None)
+
+    def hours_for(self, weekday: int) -> tuple[time, time] | None:
+        """Години роботи комплексу; None — вихідний."""
+        return next(((h.start, h.end) for h in self.opening_hours if weekday in h.weekdays), None)
+
+
 class BusinessConfig(BaseModel):
     business: BusinessInfo
     booking: BookingRules = Field(default_factory=BookingRules)
@@ -373,12 +583,20 @@ class BusinessConfig(BaseModel):
     texts: dict[str, str] = Field(default_factory=dict)
     # Запис із твариною (грумінг тощо); None — звичайний запис без тварини
     pets: PetsConfig | None = None
+    # Спа-комплекс (ресурси, гості, аванс); None — звичайний запис
+    spa: SpaConfig | None = None
     demo: DemoData | None = None
 
     @model_validator(mode="after")
     def _check_demo_pets(self) -> "BusinessConfig":
+        if self.pets is not None and self.spa is not None:
+            raise ValueError("профіль: розділи pets і spa разом не підтримуються")
         if self.demo is None:
             return self
+        if self.spa is not None:
+            names = {s.name for s in self.demo.services}
+            if unknown := set(self.spa.services) - names:
+                raise ValueError(f"spa.services: немає в demo.services: {', '.join(sorted(unknown))}")
         demo_pets = [c.pet for c in self.demo.clients if c.pet is not None]
         if self.pets is None:
             if demo_pets:

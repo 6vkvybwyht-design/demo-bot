@@ -59,7 +59,7 @@ def test_missing_profile_lists_available():
         profile_path("yoga")
 
 
-@pytest.mark.parametrize("name", ["barber", "groom", "nails"])
+@pytest.mark.parametrize("name", ["barber", "groom", "nails", "spa"])
 def test_profiles_load_with_demo_and_valid_texts(name):
     business = load_business_config(profile_path(name))
     assert business.demo is not None and business.demo.services
@@ -91,7 +91,7 @@ def test_nails_texts():
     texts.apply_overrides(load_business_config(profile_path("nails")).texts)
     derived = [getattr(texts, name) for name in texts._ICON_DERIVED]
     assert all("💅" in value and "💈" not in value for value in derived)
-    assert len(derived) == 7
+    assert len(derived) == 8
 
 
 def test_apply_overrides_resets_previous_profile():

@@ -130,14 +130,25 @@ def move_confirm_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def booking_card_kb(booking_id: int) -> InlineKeyboardMarkup:
+def booking_card_kb(
+    booking_id: int, *, can_move: bool = True, pay_amount: int | None = None
+) -> InlineKeyboardMarkup:
+    """«Скасувати» і «Перенести»; `pay_amount` — ще й демо-оплата авансу (окремим рядом)."""
     builder = InlineKeyboardBuilder()
+    if pay_amount is not None:
+        builder.button(
+            text=texts.BTN_PAY_DEPOSIT.format(amount=pay_amount),
+            callback_data=MyBookingCb(action="pay", booking_id=booking_id),
+        )
     builder.button(
         text=texts.BTN_CANCEL_BOOKING, callback_data=MyBookingCb(action="cancel", booking_id=booking_id)
     )
-    builder.button(
-        text=texts.BTN_MOVE_BOOKING, callback_data=MyBookingCb(action="move", booking_id=booking_id)
-    )
+    if can_move:
+        builder.button(
+            text=texts.BTN_MOVE_BOOKING, callback_data=MyBookingCb(action="move", booking_id=booking_id)
+        )
+    if pay_amount is not None:
+        builder.adjust(1)
     return builder.as_markup()
 
 
