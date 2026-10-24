@@ -18,6 +18,7 @@ def booking_details() -> tuple:
     return (
         selectinload(Booking.client),
         selectinload(Booking.master),
+        selectinload(Booking.second_master),
         selectinload(Booking.service),
         selectinload(Booking.pet),
         selectinload(Booking.addons).selectinload(BookingAddon.service),

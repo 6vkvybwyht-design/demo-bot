@@ -40,6 +40,7 @@ class SpaExtras:
     guests_details: str | None = None
     deposit: int | None = None
     hold_min: int = 30  # скільки тримаємо час без авансу
+    staff_count: int = 1  # 2 — послугу виконують двоє майстрів одночасно
 
 
 async def get_client(session: AsyncSession, telegram_id: int) -> Client | None:
@@ -160,7 +161,8 @@ async def create_booking(
     `extras` — спа: ресурси (перевіряються разом зі слотом), гості, аванс.
 
     `master_id=None` — «будь-який майстер»: призначаємо вільного майстра
-    з найменшою кількістю записів у цей день.
+    з найменшою кількістю записів у цей день. Якщо послугу виконують двоє
+    (`extras.staff_count=2`), другим призначаємо найменш завантаженого з вільних.
     Кидає SlotUnavailableError, якщо час уже зайнятий.
     """
     day = start.astimezone(rules.tz).date()
@@ -171,8 +173,10 @@ async def create_booking(
     # йшла вже після блокування
     await session.commit()
     resources = extras.resources if extras else None
+    staff_count = extras.staff_count if extras else 1
+    second_master_id = None
     try:
-        if resources is not None:
+        if resources is not None or staff_count > 1:
             await _lock_all_masters(session)
         if master_id is None:
             candidates = [m.id for m in await slots.masters_for_service(session, service.id)]
@@ -181,24 +185,41 @@ async def create_booking(
             await _lock_masters(session, candidates)
             free = await slots.get_free_slots_any_master(
                 session, service=service, day=day, rules=rules, now=now, duration_min=duration_min,
-                resources=resources,
+                resources=resources, staff_count=staff_count,
             )
             if start not in free:
                 raise SlotUnavailableError
-            master_id = await slots.pick_master_for_slot(
-                session, candidate_ids=free[start], day=day, rules=rules
-            )
+            if staff_count > 1:
+                master_id, second_master_id = await slots.pick_masters_for_slot(
+                    session, candidate_ids=free[start], day=day, rules=rules, count=2
+                )
+            else:
+                master_id = await slots.pick_master_for_slot(
+                    session, candidate_ids=free[start], day=day, rules=rules
+                )
         else:
             await _lock_masters(session, [master_id])
             if not await slots.is_slot_available(
                 session, master_id=master_id, service=service, start=start, rules=rules, now=now,
-                duration_min=duration_min, resources=resources,
+                duration_min=duration_min, resources=resources, staff_count=staff_count,
             ):
                 raise SlotUnavailableError
+            if staff_count > 1:
+                free = await slots.get_free_slots_any_master(
+                    session, service=service, day=day, rules=rules, now=now,
+                    duration_min=duration_min,
+                )
+                partners = [m_id for m_id in free.get(start, []) if m_id != master_id]
+                if not partners:
+                    raise SlotUnavailableError
+                second_master_id = await slots.pick_master_for_slot(
+                    session, candidate_ids=partners, day=day, rules=rules
+                )
 
         booking = Booking(
             client_id=client.id,
             master_id=master_id,
+            second_master_id=second_master_id,
             service_id=service.id,
             start_dt=start,
             end_dt=start + timedelta(minutes=duration_min or service.duration_min),
@@ -326,7 +347,7 @@ async def reschedule_booking(
 
         if spa_service.is_event(spa, booking.service.name):
             raise SlotUnavailableError  # групова подія має фіксовану дату
-        if booking.resources:
+        if booking.resources or booking.second_master_id is not None:
             await _lock_all_masters(session)
         else:
             await _lock_masters(session, [booking.master_id])
@@ -345,6 +366,9 @@ async def reschedule_booking(
             exclude_booking_id=booking.id,
             duration_min=duration,
             resources=spa_service.resource_filter(spa, plan),
+            # Масаж для двох переноситься з тими самими двома майстрами
+            staff_count=2 if booking.second_master_id is not None else 1,
+            partner_id=booking.second_master_id,
         ):
             raise SlotUnavailableError
 

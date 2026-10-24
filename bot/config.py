@@ -505,6 +505,7 @@ class SpaService(BaseModel):
     full: str | None = None  # «Детальніше»
     variants: list[SpaVariant] = Field(default_factory=list)  # 60 хв / 90 хв
     staff: bool = True  # False — без майстра (відпочинок у термальній зоні)
+    staff_count: int = Field(default=1, ge=1, le=2)  # 2 — двоє майстрів одночасно (масаж для двох)
     uses: list[ResourceUse] = Field(default_factory=list)
     guests: SpaGuests | None = None
     deposit: bool = False  # аванс обов'язковий

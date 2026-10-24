@@ -88,6 +88,14 @@ async def _moving_booking_id(state: FSMContext) -> int | None:
     return (await state.get_data()).get("booking_id")
 
 
+def _staff(data: dict) -> dict:
+    """Скільки майстрів потрібно одночасно (спа: масаж для двох) і, при перенесенні, хто другий."""
+    staff = {"staff_count": data.get("staff_count", 1)}
+    if data.get("partner_id"):
+        staff["partner_id"] = data["partner_id"]
+    return staff
+
+
 def _resources(data: dict, business: BusinessConfig) -> spa_service.ResourceFilter | None:
     """Ресурси спа (кабінети, термальна зона), які займе запис, — для фільтра слотів."""
     plan = data.get("resource_plan")
@@ -181,7 +189,7 @@ async def show_dates(
     dates = await slots.get_available_dates(
         session, service=service, master_id=master_id, rules=rules, now=utcnow(),
         exclude_booking_id=moving_id, duration_min=data.get("duration_min"),
-        resources=_resources(data, business),
+        resources=_resources(data, business), **_staff(data),
     )
     await state.set_state(RescheduleStates.date if moving_id else BookingStates.date)
     if not dates:
@@ -202,15 +210,18 @@ async def _free_starts(
     exclude_booking_id: int | None,
     duration_min: int | None,
     resources: spa_service.ResourceFilter | None = None,
+    staff: dict | None = None,
 ) -> list[datetime]:
+    staff = staff or {}
     common = dict(
         service=service, day=day, rules=business.booking, now=utcnow(), duration_min=duration_min,
-        resources=resources,
+        resources=resources, staff_count=staff.get("staff_count", 1),
     )
     if master_id is None:
         return list(await slots.get_free_slots_any_master(session, **common))
     return await slots.get_free_slots(
-        session, master_id=master_id, exclude_booking_id=exclude_booking_id, **common
+        session, master_id=master_id, exclude_booking_id=exclude_booking_id,
+        partner_id=staff.get("partner_id"), **common
     )
 
 
@@ -227,7 +238,7 @@ async def show_times(
     day = date.fromisoformat(data["day"])
     starts = await _free_starts(
         session, service, master_id, day, business, moving_id, data.get("duration_min"),
-        _resources(data, business),
+        _resources(data, business), _staff(data),
     )
     if not starts:
         # Поки клієнт обирав, вільний час на цю дату закінчився
@@ -269,6 +280,7 @@ async def show_confirm(
         addon_names=addon_names,
         guests_details=data.get("guests_details"),
         hide_master=spa_service.is_staffless(business.spa, service.name),
+        staff_count=data.get("staff_count", 1),
     )
     text = texts.CONFIRM.format(summary=summary)
     if data.get("deposit"):

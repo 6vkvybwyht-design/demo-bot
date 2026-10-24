@@ -89,8 +89,13 @@ async def test_seed_bookings_are_realistic(session, profile):
         # Учасники групової події (спа) записані на той самий час — це не перетин
         if not spa_service.is_event(profile.spa, b.service.name):
             by_master.setdefault(b.master_id, []).append(b)
+            if b.second_master_id is not None:  # масаж для двох — обидва майстри зайняті
+                assert b.second_master_id != b.master_id
+                assert b.service_id in services_by_master[b.second_master_id]
+                by_master.setdefault(b.second_master_id, []).append(b)
 
     for items in by_master.values():
+        items.sort(key=lambda b: b.start_dt)
         for prev, nxt in zip(items, items[1:]):
             assert prev.end_dt <= nxt.start_dt, "записи майстра перетинаються"
 

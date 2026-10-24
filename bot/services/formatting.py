@@ -118,18 +118,24 @@ def booking_summary(
     guests_details: str | None = None,
     hide_master: bool = False,
     deposit_line: str = "",
+    staff_count: int = 1,
 ) -> str:
     """Деталі запису. `master_name=None` — «будь-який майстер».
 
     `duration_min` і `price` — разом із додатковими послугами й для конкретної тварини,
     якщо вони не з послуги. `price_from` — ціна «від», з приміткою про огляд майстром.
     Спа: `guests_details` — склад гостей, `hide_master` — послуга без майстра,
-    `deposit_line` — стан авансу.
+    `deposit_line` — стан авансу. `staff_count=2` — до запису: другого майстра
+    ще не призначено (у наявному записі обидва імені вже в `master_name`).
     """
     template = texts.SUMMARY_NO_MASTER if hide_master else texts.SUMMARY
+    if master_name is None:
+        master = texts.ANY_TWO_MASTERS_LABEL if staff_count > 1 else texts.ANY_MASTER_LABEL
+    else:
+        master = html.quote(master_name) + (texts.SECOND_MASTER_AUTO if staff_count > 1 else "")
     text = template.format(
         service=html.quote(service.name),
-        master=html.quote(master_name) if master_name else texts.ANY_MASTER_LABEL,
+        master=master,
         date=fmt_date(start.astimezone(tz).date()),
         time=fmt_time(start, tz),
         duration=duration_min or service.duration_min,
@@ -170,7 +176,7 @@ def summary_of(booking: Booking, business: BusinessConfig, start: datetime | Non
     """
     return booking_summary(
         service=booking.service,
-        master_name=booking.master.name,
+        master_name=booking.master_names,
         start=start or booking.start_dt,
         tz=business.booking.tz,
         duration_min=booking.duration_min,
@@ -234,7 +240,7 @@ def future_bookings_lines(
         texts.FUTURE_BOOKING_LINE.format(
             when=fmt_when(b.start_dt, tz),
             service=html.quote(b.service.name),
-            master=html.quote(b.master.name),
+            master=html.quote(b.master_names),
             client=html.quote(viewer.client_name(b.client)),
             phone=html.quote(viewer.client_phone(b.client) or texts.NO_PHONE),
         )

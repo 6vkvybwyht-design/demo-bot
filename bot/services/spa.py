@@ -236,6 +236,7 @@ class Quote:
     guests: int | None = None
     guests_details: str | None = None
     plan: list[Use] = field(default_factory=list)
+    staff_count: int = 1  # скільки майстрів одночасно
 
 
 def deposit_amount(total: int, percent: int) -> int:
@@ -296,6 +297,7 @@ def quote(
         guests=guests_total,
         guests_details=details,
         plan=plan,
+        staff_count=cfg.staff_count,
     )
 
 

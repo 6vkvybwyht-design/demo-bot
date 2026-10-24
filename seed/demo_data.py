@@ -224,14 +224,33 @@ async def reset_demo_data(
                 ):
                     # Спа: кабінети чи термальна зона в цей час уже зайняті
                     continue
+                partner = None
+                if quote and quote.staff_count > 1:
+                    # Масаж для двох: другий вільний майстер, що теж виконує послугу
+                    partner = next(
+                        (
+                            name for name, other in masters.items()
+                            if other is not master and service in other.services
+                            and _fits(start, end, day, schedule, business)
+                            and not any(start < b_end and b_start < end for b_start, b_end in busy[name])
+                            and not any(
+                                t.master is other and start < t.end_dt and t.start_dt < end
+                                for t in time_off
+                            )
+                        ),
+                        None,
+                    )
+                    if partner is None:
+                        continue
+                    busy[partner].append((start, end))
                 busy[master_name].append((start, end))
-                extra = {}
+                extra = {"second_master": masters[partner]} if partner else {}
                 if quote:
                     occupied += [
                         spa_service.Occupied(r.resource, r.units, r.start_dt, r.end_dt)
                         for r in spa_service.resource_rows(quote.plan, start)
                     ]
-                    extra = dict(
+                    extra |= dict(
                         resources=spa_service.resource_rows(quote.plan, start),
                         guests=quote.guests,
                         guests_details=quote.guests_details,

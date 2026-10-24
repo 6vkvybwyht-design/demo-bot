@@ -492,8 +492,9 @@ spa:
       addons: *massage_addons
     "Масаж для двох":
       category: massage
-      short: "Двоє гостей одночасно — займає обидва кабінети."
+      short: "Двоє гостей одночасно: двоє майстрів, обидва кабінети."
       deposit: true
+      staff_count: 2  # двоє вільних майстрів одночасно
       uses: [{resource: cabinet, units: 2}]
       variants: [{duration_min: 60, price: 3700}, {duration_min: 90, price: 4900}]
       addons: ["Парафінотерапія до масажу", "Хамам і басейн після масажу (2 особи)"]

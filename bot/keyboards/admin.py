@@ -67,7 +67,7 @@ def day_kb(
             text=texts.ADMIN_BOOKING_BUTTON.format(
                 time=fmt_time(booking.start_dt, tz),
                 client=viewer.client_name(booking.client),
-                master=booking.master.name,
+                master=booking.master_names,
             ),
             callback_data=_cb("bk", booking.id),
         )

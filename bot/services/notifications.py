@@ -57,15 +57,16 @@ def staff_recipients(
     demo_mode: bool = False,
     actor_id: int | None = None,
 ) -> list[int]:
-    """Усі власники й майстер запису (якщо вказаний його Telegram ID), без дублів.
+    """Усі власники й майстри запису (якщо вказані їхні Telegram ID), без дублів.
 
     У демо-режимі Telegram ID майстра може вписати будь-який відвідувач, тому
     майстру пишемо, лише якщо це сам відвідувач, що виконав дію.
     """
-    master_id = booking.master.telegram_id
-    if demo_mode and master_id != actor_id:
-        master_id = None
-    recipients = list(dict.fromkeys([*admin_ids, master_id]))
+    masters = [booking.master] + ([booking.second_master] if booking.second_master else [])
+    master_ids = [m.telegram_id for m in masters]
+    if demo_mode:
+        master_ids = [m_id for m_id in master_ids if m_id == actor_id]
+    recipients = list(dict.fromkeys([*admin_ids, *master_ids]))
     return [chat_id for chat_id in recipients if chat_id is not None and chat_id != exclude]
 
 

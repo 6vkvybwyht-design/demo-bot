@@ -242,6 +242,9 @@ async def start_move(
             "duration_min": booking.duration_min,
             # Ресурси спа (кабінети, термальна зона) переносяться разом із записом
             "resource_plan": spa_service.plan_to_data(spa_service.plan_from_booking(booking)),
+            # Масаж для двох — з тим самим другим майстром
+            "staff_count": 2 if booking.second_master_id else 1,
+            "partner_id": booking.second_master_id,
         }
     )
     await show_dates(callback, state, session, business)

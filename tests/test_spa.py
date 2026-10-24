@@ -8,11 +8,12 @@ from sqlalchemy import delete, select
 
 from bot import texts
 from bot.config import Settings, load_business_config, profile_path
-from bot.db.models import Booking, BookingResource, BookingStatus, Client, Master, Service
+from bot.db.models import Booking, BookingResource, BookingStatus, Client, Master, Service, TimeOff
 from bot.db.session import create_session_factory
 from bot.keyboards.callbacks import AdminCb
 from bot.main import create_dispatcher
 from bot.services import booking as booking_service
+from bot.services import notifications
 from bot.services import slots
 from bot.services import spa as spa_service
 from bot.services.booking import EventFullError, SlotUnavailableError, SpaExtras
@@ -361,6 +362,7 @@ async def _book(session, spa_business, name, master, start, *, variant=None, cou
         extras=SpaExtras(
             resources=spa_service.resource_filter(spa, q.plan), guests=q.guests,
             guests_details=q.guests_details, deposit=q.deposit, hold_min=spa.deposit.hold_min,
+            staff_count=q.staff_count,
         ),
     )
 
@@ -393,6 +395,80 @@ async def test_db_massage_for_two_blocks_both_cabinets(spa_db, spa_business):
     with pytest.raises(SlotUnavailableError):
         await _book(spa_db, spa_business, "Релакс масаж", "Марко", at(TUESDAY, 15, 30))
     await _book(spa_db, spa_business, "Релакс масаж", "Марко", at(TUESDAY, 16))
+
+
+async def _time_off(session, master: str, start: datetime, end: datetime) -> None:
+    session.add(TimeOff(master_id=(await _master(session, master)).id, start_dt=start, end_dt=end))
+    await session.commit()
+
+
+async def test_db_massage_for_two_needs_two_free_masters(spa_db, spa_business):
+    service = await _service(spa_db, "Масаж для двох")
+    assert quote(spa_business.spa, service).staff_count == 2
+    start = at(TUESDAY, 12)
+    # Вільна лише Олена: Марко, Софія й Тарас 12:00–13:00 недоступні (кабінети вільні)
+    for name in ("Марко", "Софія", "Тарас"):
+        await _time_off(spa_db, name, start, at(TUESDAY, 13))
+    with pytest.raises(SlotUnavailableError):
+        await _book(spa_db, spa_business, "Масаж для двох", "Олена", start, variant=0)
+    with pytest.raises(SlotUnavailableError):
+        await _book(spa_db, spa_business, "Масаж для двох", None, start, variant=0)
+    service = await _service(spa_db, "Масаж для двох")  # після rollback об'єкти застаріли
+    plan = spa_service.plan_uses(spa_business.spa, service.name, 60)
+    common = dict(
+        service=service, day=TUESDAY, rules=spa_business.booking, now=NOW, duration_min=60,
+        resources=spa_service.resource_filter(spa_business.spa, plan), staff_count=2,
+    )
+    olena = (await _master(spa_db, "Олена")).id
+    assert start not in await slots.get_free_slots(spa_db, master_id=olena, **common)
+    assert start not in await slots.get_free_slots_any_master(spa_db, **common)
+    # Без вимоги двох майстрів Олена о 12:00 вільна — заважає саме відсутність другого
+    assert start in await slots.get_free_slots(
+        spa_db, master_id=olena, **{**common, "staff_count": 1}
+    )
+    assert at(TUESDAY, 13) in await slots.get_free_slots(spa_db, master_id=olena, **common)
+
+    # Звільняється Тарас — запис можливий, він стає другим майстром
+    await spa_db.execute(delete(TimeOff).where(TimeOff.master_id == (await _master(spa_db, "Тарас")).id))
+    await spa_db.commit()
+    booking = await _book(spa_db, spa_business, "Масаж для двох", "Олена", start, variant=0)
+    taras = (await _master(spa_db, "Тарас")).id
+    assert (booking.master_id, booking.second_master_id) == (olena, taras)
+    # Обидва майстри зайняті (перевіряємо без ресурсів: кабінети теж зайняті)
+    relax = await _service(spa_db, "Релакс масаж")
+    for master_id in (olena, taras):
+        free = await slots.get_free_slots(
+            spa_db, master_id=master_id, service=relax, day=TUESDAY, rules=spa_business.booking,
+            now=NOW, duration_min=60,
+        )
+        assert start not in free and at(TUESDAY, 13) in free
+
+
+async def test_db_massage_for_two_any_master_picks_two_different(spa_db, spa_business):
+    booking = await _book(spa_db, spa_business, "Масаж для двох", None, at(TUESDAY, 15), variant=1)
+    assert booking.second_master_id is not None and booking.second_master_id != booking.master_id
+    # Обидва майстри є в картці запису й у сповіщеннях
+    loaded = await notifications.load_booking(spa_db, booking.id)
+    assert ", " in loaded.master_names
+    loaded.master.telegram_id, loaded.second_master.telegram_id = 601, 602
+    assert notifications.staff_recipients(loaded, [ADMIN_ID]) == [ADMIN_ID, 601, 602]
+
+
+async def test_db_massage_for_two_reschedule_keeps_both_masters(spa_db, spa_business):
+    start = at(THURSDAY, 12)
+    booking = await _book(spa_db, spa_business, "Масаж для двох", "Олена", start, variant=0)
+    await booking_service.pay_deposit(spa_db, booking_id=booking.id, now=NOW)
+    master_id, partner_id = booking.master_id, booking.second_master_id
+    partner = await spa_db.get(Master, partner_id)
+    # Другий майстер зайнятий о 15:00 — перенести туди не можна, хоч інші вільні
+    await _time_off(spa_db, partner.name, at(THURSDAY, 15), at(THURSDAY, 16))
+    common = dict(booking_id=booking.id, telegram_id=1000, rules=spa_business.booking, now=NOW,
+                  spa=spa_business.spa)
+    with pytest.raises(SlotUnavailableError):
+        await booking_service.reschedule_booking(spa_db, new_start=at(THURSDAY, 15), **common)
+    moved = await booking_service.reschedule_booking(spa_db, new_start=at(THURSDAY, 17), **common)
+    assert (moved.master_id, moved.second_master_id) == (master_id, partner_id)
+    assert moved.start_dt == at(THURSDAY, 17)
 
 
 async def test_db_thermal_zone_with_cleanup(spa_db, spa_business):
@@ -738,3 +814,19 @@ async def test_other_profiles_ignore_spa_handlers(dp, user):
     assert texts.CHOOSE_SERVICE in user.last_text()
     requests = await user.send(texts.BTN_RULES)
     assert not [r for r in requests if isinstance(r, SendMessage)]
+
+
+async def test_massage_for_two_flow_assigns_two_masters(guest):
+    await guest.send(texts.BTN_BOOK)
+    await guest.click(guest.button("💆 Масаж"))
+    await guest.click(_button_starting(guest, "Масаж для двох"))
+    assert "двоє майстрів" in guest.last_text()
+    await guest.click(guest.button("60 хв · 3700 грн"))
+    await guest.click(guest.button(texts.BTN_ADDONS_NEXT))
+    await guest.click(guest.button("Олена"))
+    await _pick_first_date_and_time(guest)
+    await guest.send("0501234567")
+    assert "Олена" + texts.SECOND_MASTER_AUTO in guest.last_text()
+    await guest.click(guest.button(texts.BTN_CONFIRM))
+    held = next(t for t in reversed(guest.all_texts()) if "Час заброньовано" in t)
+    assert "👤 Майстер: Олена, " in held  # другого майстра призначено

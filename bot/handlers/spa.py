@@ -389,7 +389,8 @@ async def _finish_choice(
     await state.update_data(
         duration_min=quote.duration_min, price=quote.price, price_from=quote.price_from,
         deposit=quote.deposit, guests=quote.guests, guests_details=quote.guests_details,
-        resource_plan=spa_service.plan_to_data(quote.plan), spa_back=back,
+        resource_plan=spa_service.plan_to_data(quote.plan), staff_count=quote.staff_count,
+        spa_back=back,
     )
     if cfg.event is not None:
         await ask_phone_or_confirm(event, state, session, business)
@@ -532,7 +533,7 @@ async def confirm_booking(
     extras = SpaExtras(
         resources=_resources(data, business), guests=data.get("guests"),
         guests_details=data.get("guests_details"), deposit=data.get("deposit"),
-        hold_min=business.spa.deposit.hold_min,
+        hold_min=business.spa.deposit.hold_min, staff_count=data.get("staff_count", 1),
     )
     common = dict(
         client=client, service=service, start=start, rules=business.booking, now=utcnow(),

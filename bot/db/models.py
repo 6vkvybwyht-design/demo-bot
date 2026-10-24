@@ -203,6 +203,10 @@ class Booking(Base):
         ForeignKey("clients.id", ondelete="RESTRICT"), index=True
     )
     master_id: Mapped[int] = mapped_column(ForeignKey("masters.id", ondelete="RESTRICT"))
+    # Другий майстер, якщо послугу виконують двоє одночасно (спа: масаж для двох)
+    second_master_id: Mapped[int | None] = mapped_column(
+        ForeignKey("masters.id", ondelete="RESTRICT")
+    )
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id", ondelete="RESTRICT"))
     start_dt: Mapped[datetime] = mapped_column(UTCDateTime)
     end_dt: Mapped[datetime] = mapped_column(UTCDateTime)
@@ -238,7 +242,8 @@ class Booking(Base):
     hold_until: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
     client: Mapped[Client] = relationship()
-    master: Mapped[Master] = relationship()
+    master: Mapped[Master] = relationship(foreign_keys=[master_id])
+    second_master: Mapped[Master | None] = relationship(foreign_keys=[second_master_id])
     service: Mapped[Service] = relationship()
     pet: Mapped[Pet | None] = relationship()
     addons: Mapped[list["BookingAddon"]] = relationship(
@@ -253,6 +258,12 @@ class Booking(Base):
     @property
     def duration_min(self) -> int:
         return int((self.end_dt - self.start_dt).total_seconds() // 60)
+
+    @property
+    def master_names(self) -> str:
+        """«Олена» або «Олена, Марко» — для карток і сповіщень."""
+        names = [self.master.name] + ([self.second_master.name] if self.second_master else [])
+        return ", ".join(names)
 
     @property
     def deposit_pending(self) -> bool:
