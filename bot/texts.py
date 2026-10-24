@@ -54,6 +54,83 @@ ADDON_SELECTED = "✅ "
 ADDON_UNSELECTED = "▫️ "
 BTN_ADDONS_NEXT = "Далі ➡️"
 
+# Спа (профілі з розділом spa): розділи, картка послуги, гості, групові події
+BTN_CERTIFICATE = "🎁 Сертифікати"
+BTN_RULES = "📜 Правила відвідування"
+CHOOSE_CATEGORY = "Оберіть розділ:"
+SPA_CARD = "<b>{name}</b>"
+SPA_CARD_SHORT = "\n{text}"
+SPA_CARD_FULL = "\n\n{text}"
+SPA_CARD_PRICE = "\n\n⏱ {duration} хв · 💵 {price} грн"
+SPA_CARD_DEPOSIT = "\n💳 Потрібен аванс {percent}% — бронювання підтверджується після оплати."
+SPA_CARD_EVENT = "\n📅 {when}, до {capacity} місць"
+SPA_CARD_VARIANTS = "\n\nОберіть тривалість:"
+SPA_VARIANT_BUTTON = "{duration} хв · {price} грн"
+BTN_SPA_MORE = "📖 Детальніше"
+BTN_SPA_LESS = "⬆️ Коротше"
+BTN_SPA_PICK = "✅ Обрати"
+ASK_GUESTS = (
+    "Скільки гостей?\n\n{lines}\n\n💵 Вартість: <b>{price} грн</b> · ⏱ {duration} хв\n\n"
+    "Змінюйте кількість кнопками ➖ / ➕, потім «Далі»."
+)
+GUESTS_LINE = "• {label}: <b>{count}</b>"
+GUESTS_FREE_SEATS = "\n\nВільних місць: {free}"
+GUEST_BUTTON = "{label}: {count}"
+BTN_MINUS = "➖"
+BTN_PLUS = "➕"
+GUESTS_LIMIT = "❗️ {error}"
+ASK_SPA_ADDONS = (
+    "Додаткові послуги до «{service}» — можна обрати кілька.\n"
+    "Натисніть, щоб додати ✅ або прибрати ▫️, потім «Далі»."
+)
+SPA_ADDON_BUTTON = "{name} · {price} грн"
+SPA_ADDON_EXTRA = " · +{minutes} хв"
+CHOOSE_EVENT_DATE = "Оберіть дату:"
+EVENT_DATE_BUTTON = "{date}, {time} · вільно {free}"
+NO_EVENT_DATES = "На найближчі {days} днів вільних місць немає. Зателефонуйте нам: {phone}"
+EVENT_FULL = "😔 На жаль, стільки вільних місць уже немає. Оберіть іншу дату:"
+
+# Аванс: бронювання підтверджується лише після оплати
+CONFIRM_DEPOSIT = "\n💳 Аванс {percent}%: <b>{amount} грн</b>"
+CONFIRM_DEPOSIT_RULES = (
+    "\n\n<b>Правила бронювання:</b>\n{rules}\n\n"
+    "Після підтвердження час утримується {hold} хв. Без авансу бронювання скасується автоматично."
+)
+BOOKING_HELD = (
+    "⏳ Час заброньовано до {until}.\n\n{summary}\n\n📍 {address}\n\n"
+    "Бронювання підтвердиться після оплати авансу {amount} грн.{how}"
+)
+BOOKING_HELD_DEMO = " У демо оплата імітується кнопкою нижче."
+BOOKING_HELD_MANUAL = " Адміністратор зв'яжеться з вами щодо оплати."
+BTN_PAY_DEPOSIT = "💳 Оплатити аванс {amount} грн (ДЕМО)"
+DEPOSIT_PAID = "✅ Аванс отримано{demo}. Бронювання підтверджено!\n\n{summary}\n\n📍 {address}\n\n{after}"
+DEPOSIT_DEMO_MARK = " (ДЕМО)"
+DEPOSIT_EXPIRED_CLIENT = (
+    "⌛️ Бронювання скасовано: аванс не внесено вчасно.\n\n{summary}\n\n"
+    "Щоб записатися знову, натисніть «📅 Записатися» або зателефонуйте нам: {phone}"
+)
+
+# Подарункові сертифікати й правила
+CERT_START = "🎁 <b>Подарунковий сертифікат</b>\n\nНа послугу чи на суму?"
+BTN_CERT_SERVICE = "На послугу"
+BTN_CERT_AMOUNT = "На суму"
+CERT_CHOOSE_AMOUNT = "Оберіть суму сертифіката:"
+CERT_AMOUNT_BUTTON = "{amount} грн"
+CERT_CHOOSE_SERVICE = "Сертифікат на послугу. Оберіть розділ:"
+CERT_ITEM_SERVICE = "Послуга: {name}"
+CERT_ITEM_AMOUNT = "Сума: {amount} грн"
+CERT_CONFIRM = (
+    "Надіслати заявку на сертифікат?\n\n🎁 {item}\n\n"
+    "Адміністратор зв'яжеться з вами, щоб оформити й оплатити сертифікат."
+)
+BTN_CERT_SEND = "✅ Надіслати заявку"
+CERT_ASK_PHONE = (
+    "Залиште, будь ласка, номер телефону — адміністратор зв'яжеться з вами.\n\n"
+    "Натисніть «📱 Поділитися контактом» нижче або введіть номер повідомленням."
+)
+CERT_SENT = "✅ Заявку надіслано! Адміністратор зв'яжеться з вами найближчим часом."
+NOTIFY_CERTIFICATE = "🎁 <b>Заявка на подарунковий сертифікат</b>\n\n{item}\n\n🙋 Клієнт: {client}\n📞 {phone}"
+
 # Запис: вибір послуги, майстра, дати й часу
 CHOOSE_SERVICE = "Оберіть послугу:"
 SERVICE_BUTTON = "{name} · {duration} хв · {price} грн"
@@ -102,6 +179,9 @@ BACK_TO_TIMES = "Повертаємось до вибору часу."
 BTN_CONFIRM = "✅ Підтвердити"
 CONFIRM = "Перевірте, будь ласка, запис:\n\n{summary}"
 ANY_MASTER_LABEL = "будь-який (призначимо автоматично)"
+# Послугу виконують двоє майстрів одночасно (спа: масаж для двох) — до призначення другого
+ANY_TWO_MASTERS_LABEL = "двоє вільних майстрів (призначимо автоматично)"
+SECOND_MASTER_AUTO = " + ще один вільний майстер (призначимо автоматично)"
 SUMMARY = (
     SERVICE_ICON + " Послуга: <b>{service}</b>\n"
     "👤 Майстер: {master}\n"
@@ -110,6 +190,17 @@ SUMMARY = (
     "⏱ Тривалість: {duration} хв\n"
     "💵 Вартість: {price} грн"
 )
+# Те саме без майстра (відпочинок у термальній зоні, групова подія)
+SUMMARY_NO_MASTER = (
+    SERVICE_ICON + " Послуга: <b>{service}</b>\n"
+    "📅 Дата: {date}\n"
+    "🕐 Час: {time}\n"
+    "⏱ Тривалість: {duration} хв\n"
+    "💵 Вартість: {price} грн"
+)
+SUMMARY_GUESTS = "\n👥 {details}"
+SUMMARY_DEPOSIT_PENDING = "\n💳 Аванс {amount} грн — очікуємо оплату до {until}"
+SUMMARY_DEPOSIT_PAID = "\n💳 Аванс {amount} грн — внесено ✅"
 SUMMARY_PET = "🐾 Тварина: <b>{name}</b> ({description})\n"
 SUMMARY_ADDONS = "\n➕ Додатково: {names}"
 PRICE_FROM = "від {price}"
@@ -156,6 +247,9 @@ NOTIFY_NEW = "🆕 <b>Новий запис</b>\n\n{details}"
 NOTIFY_CANCELLED_BY_CLIENT = "❌ <b>Клієнт скасував запис</b>\n\n{details}"
 NOTIFY_CANCELLED_BY_ADMIN = "❌ <b>Запис скасовано адміністратором</b>\n\n{details}"
 NOTIFY_RESCHEDULED = "🔁 <b>Запис перенесено</b>\nБуло: {old}\n\n{details}"
+NOTIFY_NEW_PENDING = "🆕 <b>Нове бронювання — очікує авансу</b>\n\n{details}"
+NOTIFY_DEPOSIT_PAID = "💳 <b>Аванс отримано</b>\n\n{details}"
+NOTIFY_EXPIRED = "⌛️ <b>Бронювання скасовано автоматично: аванс не внесено</b>\n\n{details}"
 STAFF_DETAILS = "{summary}\n\n🙋 Клієнт: {client}\n📞 {phone}"
 NO_PHONE = "телефон не вказано"
 
@@ -200,7 +294,11 @@ STATUS_LABELS = {
     "no_show": "не прийшов",
     "cancelled_by_client": "скасовано клієнтом",
     "cancelled_by_admin": "скасовано адміністратором",
+    "expired": "скасовано: аванс не внесено",
 }
+STATUS_ICON_DEPOSIT_PENDING = "⏳"
+BTN_DEPOSIT_RECEIVED = "💳 Аванс отримано"
+ADMIN_DEPOSIT_MARKED = "✅ Аванс позначено отриманим."
 ADMIN_BOOKING = "{details}\n\nСтатус: <b>{status}</b>"
 BTN_MARK_COMPLETED = "✅ Відбувся"
 BTN_MARK_NO_SHOW = "🚫 Не прийшов"

@@ -68,6 +68,7 @@ class BookingStatus(StrEnum):
     CANCELLED_BY_ADMIN = "cancelled_by_admin"
     COMPLETED = "completed"
     NO_SHOW = "no_show"
+    EXPIRED = "expired"  # аванс не внесено вчасно — автоскасування
 
 
 class MasterService(Base):
@@ -202,6 +203,10 @@ class Booking(Base):
         ForeignKey("clients.id", ondelete="RESTRICT"), index=True
     )
     master_id: Mapped[int] = mapped_column(ForeignKey("masters.id", ondelete="RESTRICT"))
+    # Другий майстер, якщо послугу виконують двоє одночасно (спа: масаж для двох)
+    second_master_id: Mapped[int | None] = mapped_column(
+        ForeignKey("masters.id", ondelete="RESTRICT")
+    )
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id", ondelete="RESTRICT"))
     start_dt: Mapped[datetime] = mapped_column(UTCDateTime)
     end_dt: Mapped[datetime] = mapped_column(UTCDateTime)
@@ -228,19 +233,42 @@ class Booking(Base):
     price: Mapped[int | None] = mapped_column(Integer)
     # Ціна «від X грн»: точна — після огляду майстром
     price_from: Mapped[bool] = mapped_column(default=False, server_default="0")
+    # Кількість гостей і склад для показу («2 дорослих, 1 дитина 8–13 р.») — спа
+    guests: Mapped[int | None] = mapped_column(Integer)
+    guests_details: Mapped[str | None] = mapped_column(String(200))
+    # Аванс (грн). Поки не внесено, запис утримує час до hold_until, потім скасовується
+    deposit: Mapped[int | None] = mapped_column(Integer)
+    deposit_paid_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    hold_until: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
     client: Mapped[Client] = relationship()
-    master: Mapped[Master] = relationship()
+    master: Mapped[Master] = relationship(foreign_keys=[master_id])
+    second_master: Mapped[Master | None] = relationship(foreign_keys=[second_master_id])
     service: Mapped[Service] = relationship()
     pet: Mapped[Pet | None] = relationship()
     addons: Mapped[list["BookingAddon"]] = relationship(
         back_populates="booking", cascade="all, delete-orphan", passive_deletes=True,
         order_by="BookingAddon.id",
     )
+    resources: Mapped[list["BookingResource"]] = relationship(
+        back_populates="booking", cascade="all, delete-orphan", passive_deletes=True,
+        order_by="BookingResource.id",
+    )
 
     @property
     def duration_min(self) -> int:
         return int((self.end_dt - self.start_dt).total_seconds() // 60)
+
+    @property
+    def master_names(self) -> str:
+        """«Олена» або «Олена, Марко» — для карток і сповіщень."""
+        names = [self.master.name] + ([self.second_master.name] if self.second_master else [])
+        return ", ".join(names)
+
+    @property
+    def deposit_pending(self) -> bool:
+        """Аванс потрібен, але ще не внесений: бронювання не підтверджене."""
+        return self.deposit is not None and self.deposit_paid_at is None
 
     @property
     def display_price(self) -> int:
@@ -263,6 +291,30 @@ class BookingAddon(Base):
 
     booking: Mapped[Booking] = relationship(back_populates="addons")
     service: Mapped[Service] = relationship()
+
+
+class BookingResource(Base):
+    """Скільки одиниць ресурсу (кабінет, термальна зона) і на який час займає запис.
+
+    Час — без підготовки після бронювання: її додаємо під час перевірки з профілю.
+    """
+
+    __tablename__ = "booking_resources"
+    __table_args__ = (
+        CheckConstraint("start_dt < end_dt", name="start_before_end"),
+        CheckConstraint("units > 0", name="units_positive"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    booking_id: Mapped[int] = mapped_column(
+        ForeignKey("bookings.id", ondelete="CASCADE"), index=True
+    )
+    resource: Mapped[str] = mapped_column(String(30))
+    units: Mapped[int] = mapped_column(Integer)
+    start_dt: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
+    end_dt: Mapped[datetime] = mapped_column(UTCDateTime)
+
+    booking: Mapped[Booking] = relationship(back_populates="resources")
 
 
 class FsmState(Base):

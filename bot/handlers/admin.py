@@ -16,6 +16,7 @@ from bot.keyboards import admin as kb
 from bot.keyboards.callbacks import AdminCb
 from bot.middlewares.admin import AdminOnlyMiddleware
 from bot.services import admin, notifications
+from bot.services import booking as booking_service
 from bot.services.admin import InputError
 from bot.services.booking import BookingNotFoundError
 from bot.services.demo import Viewer
@@ -25,7 +26,9 @@ from bot.services.formatting import (
     admin_service_text,
     future_bookings_lines,
     period_text,
+    deposit_paid_text,
     status_label,
+    summary_of,
     time_off_line,
     time_offs_text,
 )
@@ -146,6 +149,34 @@ async def mark_booking(
     except BookingNotFoundError:
         callback_answer.text = texts.ADMIN_BOOKING_CHANGED
     await show_booking(callback, callback_data.id, session, business, viewer)
+
+
+@router.callback_query(AdminCb.filter(F.action == "dep_ok"))
+async def deposit_received(
+    callback: CallbackQuery, callback_data: AdminCb, callback_answer: CallbackAnswer,
+    session: AsyncSession, business: BusinessConfig, bot: Bot, viewer: Viewer,
+) -> None:
+    """«Аванс отримано»: бронювання підтверджене, клієнт отримує сповіщення."""
+    now = utcnow()
+    try:
+        booking = await booking_service.pay_deposit(session, booking_id=callback_data.id, now=now)
+    except BookingNotFoundError:
+        callback_answer.text = texts.ADMIN_BOOKING_CHANGED
+        await show_booking(callback, callback_data.id, session, business, viewer)
+        return
+    callback_answer.text = texts.ADMIN_DEPOSIT_MARKED
+    if viewer.may_notify(booking.client.telegram_id):
+        reminders = booking_service.planned_reminders(
+            booking.start_dt, booking.created_at, business.reminders
+        )
+        await notifications.safe_send(
+            bot, booking.client.telegram_id,
+            deposit_paid_text(
+                summary=summary_of(booking, business), address=business.business.address,
+                reminders=reminders, demo_mode=False,
+            ),
+        )
+    await show_booking(callback, booking.id, session, business, viewer)
 
 
 @router.callback_query(AdminCb.filter(F.action == "bk_cancel"))

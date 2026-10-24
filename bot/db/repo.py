@@ -10,16 +10,19 @@ from bot.db.models import Booking, BookingAddon, Master, MasterService, Service
 
 
 def booking_details() -> tuple:
-    """Усе, що показуємо в картці запису: клієнт, майстер, послуга, тварина, додаткові послуги.
+    """Усе, що показуємо в картці запису: клієнт, майстер, послуга, тварина, додаткові
+    послуги, ресурси спа.
 
     Завантажуємо одразу: ліниве довантаження в async-сесії не працює.
     """
     return (
         selectinload(Booking.client),
         selectinload(Booking.master),
+        selectinload(Booking.second_master),
         selectinload(Booking.service),
         selectinload(Booking.pet),
         selectinload(Booking.addons).selectinload(BookingAddon.service),
+        selectinload(Booking.resources),
     )
 
 

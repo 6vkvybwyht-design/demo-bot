@@ -44,7 +44,7 @@ class NoopCb(CallbackData, prefix="noop"):
 
 
 class MyBookingCb(CallbackData, prefix="my"):
-    action: str  # cancel / cancel_yes / cancel_no / move
+    action: str  # cancel / cancel_yes / cancel_no / move / attend / pay
     booking_id: int
 
 
@@ -52,3 +52,29 @@ class AdminCb(CallbackData, prefix="adm"):
     action: str
     id: int = 0
     arg: str = ""
+
+
+# --- Спа ----------------------------------------------------------------------
+
+
+class CategoryCb(CallbackData, prefix="cat"):
+    key: str  # ключ розділу з spa.categories
+
+
+class SpaCardCb(CallbackData, prefix="spa"):
+    action: str  # more / less / pick
+    variant: int = 0  # номер варіанта тривалості (pick)
+
+
+class GuestCb(CallbackData, prefix="guest"):
+    kind: str  # ключ виду гостей
+    delta: int  # +1 / -1
+
+
+class EventDateCb(CallbackData, prefix="evt"):
+    ts: int  # Unix-час початку події (UTC)
+
+
+class CertCb(CallbackData, prefix="cert"):
+    action: str  # service / amount / sum
+    amount: int = 0

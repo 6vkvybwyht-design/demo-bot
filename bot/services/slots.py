@@ -5,13 +5,14 @@
 """
 
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from enum import Enum
+from typing import Protocol
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import BookingRules
@@ -136,6 +137,28 @@ def pick_least_busy_master(candidate_ids: Sequence[int], bookings_per_master: Co
 # --- Робота з БД --------------------------------------------------------------
 
 
+class SlotFilter(Protocol):
+    """Додаткова умова для слотів, крім графіка майстра (наприклад, ресурси спа)."""
+
+    async def for_day(
+        self, session: AsyncSession, day: date, rules: BookingRules, exclude_booking_id: int | None
+    ) -> Callable[[datetime], bool]: ...
+
+
+async def _apply_filter(
+    starts: list[datetime],
+    resources: SlotFilter | None,
+    session: AsyncSession,
+    day: date,
+    rules: BookingRules,
+    exclude_booking_id: int | None,
+) -> list[datetime]:
+    if resources is None or not starts:
+        return starts
+    allowed = await resources.for_day(session, day, rules, exclude_booking_id)
+    return [start for start in starts if allowed(start)]
+
+
 @dataclass(frozen=True)
 class _MasterDay:
     schedule: WorkingHours | None
@@ -166,7 +189,8 @@ async def _load_master_day(
         )
     )
     bookings_query = select(Booking).where(
-        Booking.master_id == master_id,
+        # Майстер зайнятий і в записах, де він другий (масаж для двох)
+        or_(Booking.master_id == master_id, Booking.second_master_id == master_id),
         Booking.status == BookingStatus.CONFIRMED,
         Booking.start_dt < day_end,
         Booking.end_dt > day_start,
@@ -217,22 +241,48 @@ async def get_free_slots(
     now: datetime,
     exclude_booking_id: int | None = None,
     duration_min: int | None = None,
+    resources: SlotFilter | None = None,
+    staff_count: int = 1,
+    partner_id: int | None = None,
 ) -> list[datetime]:
     """Вільні слоти конкретного майстра на місцеву дату.
 
     `duration_min` — якщо тривалість не з послуги (розмір тварини, перенесення запису).
+    `resources` — додатково лишає слоти, на які вистачає ресурсів (кабінети спа тощо).
+    `staff_count=2` — послугу виконують двоє: лишаємо слоти, де вільний ще хтось
+    із майстрів послуги, а якщо задано `partner_id` — саме цей майстер (перенесення).
     """
     if not await _master_does_service(session, master_id, service.id):
         return []
     master_day = await _load_master_day(session, master_id, day, rules.tz, exclude_booking_id)
-    return compute_free_slots(
+    duration = duration_min or service.duration_min
+    starts = compute_free_slots(
         day=day,
         schedule=master_day.schedule,
         busy=master_day.busy,
-        duration_min=duration_min or service.duration_min,
+        duration_min=duration,
         rules=rules,
         now=now,
     )
+    if staff_count > 1 and starts:
+        if partner_id is not None:
+            partner = set(
+                await get_free_slots(
+                    session, master_id=partner_id, service=service, day=day, rules=rules, now=now,
+                    exclude_booking_id=exclude_booking_id, duration_min=duration,
+                )
+            )
+            starts = [start for start in starts if start in partner]
+        else:
+            others = await get_free_slots_any_master(
+                session, service=service, day=day, rules=rules, now=now, duration_min=duration,
+                exclude_booking_id=exclude_booking_id,
+            )
+            starts = [
+                start for start in starts
+                if len(set(others.get(start, [])) - {master_id}) >= staff_count - 1
+            ]
+    return await _apply_filter(starts, resources, session, day, rules, exclude_booking_id)
 
 
 async def get_free_slots_any_master(
@@ -243,11 +293,17 @@ async def get_free_slots_any_master(
     rules: BookingRules,
     now: datetime,
     duration_min: int | None = None,
+    resources: SlotFilter | None = None,
+    staff_count: int = 1,
+    exclude_booking_id: int | None = None,
 ) -> dict[datetime, list[int]]:
-    """«Будь-який майстер»: об'єднання слотів. Ключ — початок слоту, значення — id вільних майстрів."""
+    """«Будь-який майстер»: об'єднання слотів. Ключ — початок слоту, значення — id вільних майстрів.
+
+    `staff_count=2` — лише слоти, де вільні щонайменше двоє майстрів послуги.
+    """
     slots: dict[datetime, list[int]] = {}
     for master_id in [m.id for m in await masters_for_service(session, service.id)]:
-        master_day = await _load_master_day(session, master_id, day, rules.tz)
+        master_day = await _load_master_day(session, master_id, day, rules.tz, exclude_booking_id)
         for start in compute_free_slots(
             day=day,
             schedule=master_day.schedule,
@@ -257,23 +313,43 @@ async def get_free_slots_any_master(
             now=now,
         ):
             slots.setdefault(start, []).append(master_id)
-    return dict(sorted(slots.items()))
+    slots = {start: ids for start, ids in slots.items() if len(ids) >= staff_count}
+    allowed = set(
+        await _apply_filter(list(slots), resources, session, day, rules, exclude_booking_id)
+    )
+    return {start: ids for start, ids in sorted(slots.items()) if start in allowed}
+
+
+async def _bookings_per_master(
+    session: AsyncSession, candidate_ids: Sequence[int], day: date, rules: BookingRules
+) -> Counter:
+    """Скільки записів у кожного майстра цього дня (і як основного, і як другого)."""
+    day_start, day_end = day_bounds_utc(day, rules.tz)
+    result = await session.execute(
+        select(Booking.master_id, Booking.second_master_id).where(
+            or_(Booking.master_id.in_(candidate_ids), Booking.second_master_id.in_(candidate_ids)),
+            Booking.status == BookingStatus.CONFIRMED,
+            Booking.start_dt >= day_start,
+            Booking.start_dt < day_end,
+        )
+    )
+    return Counter(m_id for row in result.all() for m_id in row if m_id is not None)
 
 
 async def pick_master_for_slot(
     session: AsyncSession, *, candidate_ids: Sequence[int], day: date, rules: BookingRules
 ) -> int:
     """Із вільних на слот майстрів обирає того, хто має найменше записів у цей день."""
-    day_start, day_end = day_bounds_utc(day, rules.tz)
-    result = await session.scalars(
-        select(Booking.master_id).where(
-            Booking.master_id.in_(candidate_ids),
-            Booking.status == BookingStatus.CONFIRMED,
-            Booking.start_dt >= day_start,
-            Booking.start_dt < day_end,
-        )
-    )
-    return pick_least_busy_master(candidate_ids, Counter(result.all()))
+    counts = await _bookings_per_master(session, candidate_ids, day, rules)
+    return pick_least_busy_master(candidate_ids, counts)
+
+
+async def pick_masters_for_slot(
+    session: AsyncSession, *, candidate_ids: Sequence[int], day: date, rules: BookingRules, count: int
+) -> list[int]:
+    """`count` найменш завантажених цього дня майстрів (за рівності — з меншим id)."""
+    counts = await _bookings_per_master(session, candidate_ids, day, rules)
+    return sorted(candidate_ids, key=lambda m_id: (counts[m_id], m_id))[:count]
 
 
 async def get_available_dates(
@@ -285,6 +361,8 @@ async def get_available_dates(
     now: datetime,
     exclude_booking_id: int | None = None,
     duration_min: int | None = None,
+    resources: SlotFilter | None = None,
+    staff_count: int = 1,
 ) -> list[date]:
     """Дати в межах горизонту запису, на які є хоча б один вільний слот.
 
@@ -298,7 +376,7 @@ async def get_available_dates(
             has_slots = bool(
                 await get_free_slots_any_master(
                     session, service=service, day=day, rules=rules, now=now,
-                    duration_min=duration_min,
+                    duration_min=duration_min, resources=resources, staff_count=staff_count,
                 )
             )
         else:
@@ -312,6 +390,8 @@ async def get_available_dates(
                     now=now,
                     exclude_booking_id=exclude_booking_id,
                     duration_min=duration_min,
+                    resources=resources,
+                    staff_count=staff_count,
                 )
             )
         if has_slots:
@@ -329,6 +409,9 @@ async def is_slot_available(
     now: datetime,
     exclude_booking_id: int | None = None,
     duration_min: int | None = None,
+    resources: SlotFilter | None = None,
+    staff_count: int = 1,
+    partner_id: int | None = None,
 ) -> bool:
     """Повторна перевірка слоту перед підтвердженням запису (захист від подвійного запису)."""
     day = start.astimezone(rules.tz).date()
@@ -341,5 +424,8 @@ async def is_slot_available(
         now=now,
         exclude_booking_id=exclude_booking_id,
         duration_min=duration_min,
+        resources=resources,
+        staff_count=staff_count,
+        partner_id=partner_id,
     )
     return start.astimezone(UTC) in slots

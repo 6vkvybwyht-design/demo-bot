@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -117,7 +117,10 @@ async def future_bookings(
         Booking.status == BookingStatus.CONFIRMED, Booking.start_dt > now
     )
     if master_id is not None:
-        query = query.where(Booking.master_id == master_id)
+        # І записи, де майстер другий (масаж для двох)
+        query = query.where(
+            or_(Booking.master_id == master_id, Booking.second_master_id == master_id)
+        )
     if service_id is not None:
         query = query.where(Booking.service_id == service_id)
     result = await session.scalars(_with_details(query.order_by(Booking.start_dt)))

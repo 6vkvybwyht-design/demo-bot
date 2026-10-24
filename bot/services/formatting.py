@@ -7,8 +7,9 @@ from zoneinfo import ZoneInfo
 from aiogram import html
 
 from bot import texts
-from bot.config import BusinessConfig, BusinessInfo, PetsConfig
+from bot.config import BusinessConfig, BusinessInfo, PetsConfig, SpaConfig, SpaGuests, SpaService
 from bot.db.models import Booking, BookingStatus, Master, Pet, Service, TimeOff, WorkingHours
+from bot.services import spa as spa_service
 from bot.services.booking import PlannedReminders
 from bot.services.demo import FULL_ACCESS, Viewer
 from bot.services.pets import Offer, pet_description
@@ -114,15 +115,27 @@ def booking_summary(
     pets: PetsConfig | None = None,
     price_from: bool = False,
     addon_names: Sequence[str] = (),
+    guests_details: str | None = None,
+    hide_master: bool = False,
+    deposit_line: str = "",
+    staff_count: int = 1,
 ) -> str:
     """Деталі запису. `master_name=None` — «будь-який майстер».
 
     `duration_min` і `price` — разом із додатковими послугами й для конкретної тварини,
     якщо вони не з послуги. `price_from` — ціна «від», з приміткою про огляд майстром.
+    Спа: `guests_details` — склад гостей, `hide_master` — послуга без майстра,
+    `deposit_line` — стан авансу. `staff_count=2` — до запису: другого майстра
+    ще не призначено (у наявному записі обидва імені вже в `master_name`).
     """
-    text = texts.SUMMARY.format(
+    template = texts.SUMMARY_NO_MASTER if hide_master else texts.SUMMARY
+    if master_name is None:
+        master = texts.ANY_TWO_MASTERS_LABEL if staff_count > 1 else texts.ANY_MASTER_LABEL
+    else:
+        master = html.quote(master_name) + (texts.SECOND_MASTER_AUTO if staff_count > 1 else "")
+    text = template.format(
         service=html.quote(service.name),
-        master=html.quote(master_name) if master_name else texts.ANY_MASTER_LABEL,
+        master=master,
         date=fmt_date(start.astimezone(tz).date()),
         time=fmt_time(start, tz),
         duration=duration_min or service.duration_min,
@@ -130,11 +143,24 @@ def booking_summary(
     )
     if pet is not None:
         text = pet_line(pet, pets) + text
+    if guests_details:
+        text += texts.SUMMARY_GUESTS.format(details=html.quote(guests_details))
     if addon_names:
         text += texts.SUMMARY_ADDONS.format(names=html.quote(", ".join(addon_names)))
+    text += deposit_line
     if price_from:
         text += texts.PRICE_FROM_NOTE
     return text
+
+
+def deposit_line(booking: Booking, tz: ZoneInfo) -> str:
+    """Стан авансу запису: очікуємо до … / внесено. Порожньо, якщо аванс не потрібен."""
+    if booking.deposit is None:
+        return ""
+    if booking.deposit_paid_at is not None:
+        return texts.SUMMARY_DEPOSIT_PAID.format(amount=booking.deposit)
+    until = fmt_time(booking.hold_until, tz) if booking.hold_until else "—"
+    return texts.SUMMARY_DEPOSIT_PENDING.format(amount=booking.deposit, until=until)
 
 
 def pet_line(pet: Pet, pets: PetsConfig | None) -> str:
@@ -150,7 +176,7 @@ def summary_of(booking: Booking, business: BusinessConfig, start: datetime | Non
     """
     return booking_summary(
         service=booking.service,
-        master_name=booking.master.name,
+        master_name=booking.master_names,
         start=start or booking.start_dt,
         tz=business.booking.tz,
         duration_min=booking.duration_min,
@@ -159,6 +185,9 @@ def summary_of(booking: Booking, business: BusinessConfig, start: datetime | Non
         pets=business.pets,
         price_from=booking.price_from,
         addon_names=[addon.service.name for addon in booking.addons],
+        guests_details=booking.guests_details,
+        hide_master=spa_service.is_staffless(business.spa, booking.service.name),
+        deposit_line=deposit_line(booking, business.booking.tz),
     )
 
 
@@ -189,7 +218,9 @@ def admin_day_text(
         lines.append(
             texts.ADMIN_DAY_LINE.format(
                 icon=(
-                    texts.STATUS_ICON_CLIENT_CONFIRMED
+                    texts.STATUS_ICON_DEPOSIT_PENDING
+                    if booking.status is BookingStatus.CONFIRMED and booking.deposit_pending
+                    else texts.STATUS_ICON_CLIENT_CONFIRMED
                     if booking.status is BookingStatus.CONFIRMED and booking.client_confirmed_at
                     else texts.STATUS_ICONS[booking.status.value]
                 ),
@@ -209,7 +240,7 @@ def future_bookings_lines(
         texts.FUTURE_BOOKING_LINE.format(
             when=fmt_when(b.start_dt, tz),
             service=html.quote(b.service.name),
-            master=html.quote(b.master.name),
+            master=html.quote(b.master_names),
             client=html.quote(viewer.client_name(b.client)),
             phone=html.quote(viewer.client_phone(b.client) or texts.NO_PHONE),
         )
@@ -295,3 +326,96 @@ def time_off_line(time_off: TimeOff, tz: ZoneInfo) -> str:
 def time_offs_text(master_name: str, time_offs: Sequence[TimeOff], tz: ZoneInfo) -> str:
     lines = "\n".join(time_off_line(t, tz) for t in time_offs) or texts.TIME_OFFS_EMPTY
     return texts.ADMIN_TIME_OFFS.format(name=html.quote(master_name), lines=lines)
+
+
+# --- Спа ----------------------------------------------------------------------
+
+
+def spa_service_button(service: Service, spa: SpaConfig) -> str:
+    """Кнопка послуги в розділі: найдешевший варіант — «від», якщо варіантів кілька."""
+    duration, price, price_from = spa_service.list_price(service, spa)
+    return texts.SERVICE_BUTTON.format(
+        name=service.name, duration=duration, price=fmt_price(price, price_from)
+    )
+
+
+def spa_card_text(service: Service, cfg: SpaService, spa: SpaConfig, *, details: bool) -> str:
+    """Картка послуги: назва, короткий або повний опис, ціна, аванс, дата події."""
+    text = texts.SPA_CARD.format(name=html.quote(service.name))
+    if details and cfg.full:
+        text += texts.SPA_CARD_FULL.format(text=html.quote(cfg.full))
+    elif cfg.short:
+        text += texts.SPA_CARD_SHORT.format(text=html.quote(cfg.short))
+    if not cfg.variants:
+        duration, price, price_from = spa_service.list_price(service, spa)
+        text += texts.SPA_CARD_PRICE.format(duration=duration, price=fmt_price(price, price_from))
+    if cfg.event is not None:
+        days = ", ".join(texts.WEEKDAYS_FULL[wd] for wd in cfg.event.weekdays)
+        when = f"{days}, {cfg.event.start:%H:%M}–{cfg.event.end:%H:%M}"
+        text += texts.SPA_CARD_EVENT.format(when=when, capacity=cfg.event.capacity)
+    if cfg.deposit:
+        text += texts.SPA_CARD_DEPOSIT.format(percent=spa.deposit.percent)
+    if cfg.variants:
+        text += texts.SPA_CARD_VARIANTS
+    return text
+
+
+def guests_text(
+    guests: SpaGuests, counts: dict[str, int], quote: "spa_service.Quote", free: int | None = None
+) -> str:
+    lines = "\n".join(
+        texts.GUESTS_LINE.format(label=html.quote(k.label), count=counts.get(k.key, 0))
+        for k in guests.kinds
+    )
+    text = texts.ASK_GUESTS.format(
+        lines=lines, price=fmt_price(quote.price, quote.price_from), duration=quote.duration_min
+    )
+    if free is not None:
+        text += texts.GUESTS_FREE_SEATS.format(free=free)
+    return text
+
+
+def spa_addon_button(addon: Service, spa: SpaConfig) -> str:
+    text = texts.SPA_ADDON_BUTTON.format(name=addon.name, price=addon.price)
+    cfg = spa.service(addon.name)
+    if cfg is not None and cfg.extra_min:
+        text += texts.SPA_ADDON_EXTRA.format(minutes=cfg.extra_min)
+    return text
+
+
+def event_date_button(start: datetime, free: int, tz: ZoneInfo) -> str:
+    return texts.EVENT_DATE_BUTTON.format(
+        date=fmt_date(start.astimezone(tz).date()), time=fmt_time(start, tz), free=free
+    )
+
+
+def deposit_confirm_text(amount: int, spa: SpaConfig) -> str:
+    """Аванс і коротко правила — на екрані підтвердження, перед оплатою."""
+    return texts.CONFIRM_DEPOSIT.format(
+        percent=spa.deposit.percent, amount=amount
+    ) + texts.CONFIRM_DEPOSIT_RULES.format(
+        rules=html.quote(spa.deposit.rules), hold=spa.deposit.hold_min
+    )
+
+
+def booking_held_text(
+    *, booking: Booking, summary: str, address: str, tz: ZoneInfo, demo_mode: bool
+) -> str:
+    return texts.BOOKING_HELD.format(
+        until=fmt_time(booking.hold_until, tz),
+        summary=summary,
+        address=html.quote(address),
+        amount=booking.deposit,
+        how=texts.BOOKING_HELD_DEMO if demo_mode else texts.BOOKING_HELD_MANUAL,
+    )
+
+
+def deposit_paid_text(
+    *, summary: str, address: str, reminders: PlannedReminders, demo_mode: bool
+) -> str:
+    return texts.DEPOSIT_PAID.format(
+        demo=texts.DEPOSIT_DEMO_MARK if demo_mode else "",
+        summary=summary,
+        address=html.quote(address),
+        after=_after_booking(reminders),
+    )

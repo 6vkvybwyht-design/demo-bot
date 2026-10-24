@@ -6,7 +6,7 @@ from bot import texts
 from bot.config import DEFAULT_BUSINESS_CONFIG, Settings, load_business_config
 from bot.db.models import Base, Master, Service, WorkingHours
 from bot.db.session import create_engine, create_session_factory
-from bot.handlers import admin, client, fallback, my_bookings
+from bot.handlers import admin, client, fallback, my_bookings, spa
 from bot.main import create_dispatcher
 from tests.fake_telegram import TelegramUser
 
@@ -43,7 +43,7 @@ def _detach_routers():
     # Модульний router в aiogram можна приєднати лише до одного Dispatcher,
     # а тести створюють новий диспетчер на кожен тест
     yield
-    for module in (admin, client, fallback, my_bookings):
+    for module in (admin, client, fallback, my_bookings, spa):
         module.router._parent_router = None
 
 
