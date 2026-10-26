@@ -13,7 +13,7 @@ from seed.demo_data import reset_demo_data
 
 # Середа; наступні 7 днів захоплюють перехід Києва на зимовий час (25.10.2026)
 NOW = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
-PROFILES = ["barber", "groom", "nails", "spa"]
+PROFILES = ["barber", "groom", "nails", "spa", "spa_demo"]
 
 
 @pytest.fixture(params=PROFILES)

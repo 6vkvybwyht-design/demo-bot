@@ -59,7 +59,7 @@ def test_missing_profile_lists_available():
         profile_path("yoga")
 
 
-@pytest.mark.parametrize("name", ["barber", "groom", "nails", "spa"])
+@pytest.mark.parametrize("name", ["barber", "groom", "nails", "spa", "spa_demo"])
 def test_profiles_load_with_demo_and_valid_texts(name):
     business = load_business_config(profile_path(name))
     assert business.demo is not None and business.demo.services
