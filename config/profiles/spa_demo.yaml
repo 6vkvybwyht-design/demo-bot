@@ -1,0 +1,387 @@
+# Профіль «Demo Spa» — нейтральне демо для будь-яких масажних і спа-салонів.
+# BUSINESS_PROFILE=spa_demo. Ціни — усереднені й округлені, послуги — загальні.
+# Механіка та сама, що в spa.yaml: 2 масажні кабінети, термальна зона (бронюється
+# цілком, 30 хв на підготовку), аванс, програми для компанії, групова подія, сертифікати.
+# Час пишіть у лапках: "10:00".
+
+business:
+  name: "Demo Spa — онлайн-запис"
+  address: "м. Львів, вул. Сонячна, 1"
+  phone: "+380 32 000 00 05"
+  map_url: "https://maps.google.com/?q=вулиця+Сонячна+1,+Львів"
+  instagram: "https://instagram.com/demo.spa.salon"
+
+booking:
+  timezone: "Europe/Kyiv"
+  slot_step_min: 30
+  horizon_days: 14
+  min_lead_time_min: 60
+  cancel_deadline_hours: 2
+  # Із внесеним авансом перенести чи скасувати в боті можна за 48 год
+  deposit_deadline_hours: 48
+
+# Нагадування клієнту — за день до візиту
+reminders:
+  before_24h: true
+  before_2h: false
+
+texts:
+  SERVICE_ICON: "🧖"
+  WELCOME: |-
+    Вітаємо у <b>{name}</b>! 🌿
+
+    Тут можна записатися на масаж, спа-програму чи відпочинок у термальній зоні, замовити подарунковий сертифікат, переглянути свої записи й правила відвідування.
+
+    Оберіть дію в меню нижче.
+  BTN_ANY_MASTER: "👥 Будь-який вільний"
+  PRICE_FROM_NOTE: "\nℹ️ Точну ціну підтвердить адміністратор."
+  DEMO_OWNER_VIEW: "👀 <b>Так це побачить адміністратор спа-салону:</b>\n\n{notification}"
+  DEMO_OWNER_INTRO: |-
+    👀 <b>Демо: так бот бачить адміністратор спа-салону.</b>
+
+    Дані тестові й щоночі о 04:00 скидаються — можна сміливо натискати все, зокрема «💳 Аванс отримано». Телефони й імена інших відвідувачів приховано; свої записи ви бачите повністю.
+
+spa:
+  resources:
+    cabinet: {name: "Масажний кабінет", capacity: 2}
+    thermal: {name: "Термальна зона", capacity: 1, cleanup_min: 30}
+
+  # Ресурси займаються лише в години роботи салону
+  opening_hours:
+    - {weekdays: [0], start: "13:00", end: "21:00"}
+    - {weekdays: [1, 2, 3, 4, 5, 6], start: "10:00", end: "21:00"}
+
+  categories:
+    - {key: programs, label: "🔥 Спа-програми"}
+    - {key: two, label: "💑 Спа-програми для двох"}
+    - {key: company, label: "👥 Програми для компанії"}
+    - {key: rest, label: "♨️ Відпочинок у термальній зоні"}
+    - {key: massage, label: "💆 Масаж"}
+    - {key: event, label: "🌙 Відкритий банний вечір"}
+
+  deposit:
+    percent: 50
+    hold_min: 30
+    rules: |-
+      • Перенесення не пізніше ніж за 48 год — аванс залишається на депозиті.
+      • Скасування в день візиту — аванс не повертається.
+      • Запізнення не зменшує вартості: послуга триває залишок часу.
+
+  visit_rules: |-
+    📜 <b>Правила відвідування</b>
+
+    1. Відвідування — за попереднім записом.
+    2. Запізнення не зменшує вартості: послуга триває залишок часу.
+    3. Спа-програми, відпочинок у термальній зоні й масаж для двох бронюються після авансу 50%. Перенесення за 48 год — аванс залишається на депозиті; скасування в день візиту — аванс не повертається.
+    4. Не відвідуйте термальну зону з відкритими ранами, після травм чи з медичними пов'язками.
+    5. Алкоголь, тютюн, власна їжа й напої — заборонені.
+    6. Віники, скраби та інші засоби — разом із послугами пар-майстра.
+    7. Стрибати в басейн заборонено.
+    8. Додаткові послуги не продовжують тривалість програми.
+    9. Час можна продовжити за доплату, якщо після вас немає іншого бронювання.
+
+    У вартість входять чай, вода, халати, рушники, тапочки й засоби гігієни. Візьміть із собою купальник і змінне взуття.
+
+  certificate_amounts: [1000, 2000, 3000, 5000]
+
+  # Налаштування послуг (прив'язка — за назвою, як у demo.services і в адмінці)
+  services:
+    # --- Спа-програми для одного гостя ---
+    "Турецький хамам":
+      category: programs
+      deposit: true
+      uses: [{resource: thermal}]
+      addons: &program_addons
+        - "Пропарка віниками"
+        - "Мильний пінний масаж"
+        - "Пілінг всього тіла"
+        - "Глиняна маска для тіла"
+        - "Ванночка для ніг"
+      short: "Прогрів у хамамі, пілінг рукавичкою кесе й мильний пінний масаж."
+      full: >-
+        Прогрів у хамамі, омивання теплою водою, скраб для всього тіла, пілінг рукавичкою
+        кесе, мильний пінний масаж, басейн і відпочинок із трав'яним чаєм.
+    "Слов'янське паріння":
+      category: programs
+      deposit: true
+      uses: [{resource: thermal}]
+      addons: *program_addons
+      short: "Прогрів у парній, пропарка віниками й контрастні процедури."
+      full: >-
+        Прогрів у парній, ароматний перший пар, пропарка всього тіла віниками, контрастні
+        процедури, басейн і відпочинок із трав'яним чаєм.
+
+    # --- Спа-програми для двох ---
+    "Турецький хамам для двох":
+      category: two
+      deposit: true
+      uses: [{resource: thermal}]
+      guests: &two_guests {kinds: [{key: adults, label: "Гості", min: 2, max: 2}]}
+      addons: *program_addons
+      short: "Турецький хамам для двох гостей: кесе, мильний масаж, басейн і чай."
+      full: >-
+        Прогрів у хамамі, омивання теплою водою, скраб, пілінг рукавичкою кесе й мильний
+        пінний масаж для кожного гостя, басейн і відпочинок із трав'яним чаєм.
+    "Слов'янське паріння для двох":
+      category: two
+      deposit: true
+      uses: [{resource: thermal}]
+      guests: *two_guests
+      addons: *program_addons
+      short: "Паріння для двох гостей з індивідуальною пропаркою віниками."
+      full: >-
+        Прогрів у парній, ароматний перший пар, індивідуальна пропарка віниками для кожного
+        гостя, контрастні процедури, басейн і відпочинок із трав'яним чаєм.
+
+    # --- Програми для компанії: клієнт вказує кількість гостей ---
+    "Турецький хамам для компанії":
+      category: company
+      deposit: true
+      uses: [{resource: thermal}]
+      # 3 особи — 9000 грн, кожна наступна — 2500 грн (до 6 осіб)
+      guests:
+        kinds: [{key: adults, label: "Гості", min: 3, max: 6, included: 3, price: 2500}]
+      addons: *program_addons
+      short: "Для 3–6 гостей: хамам, кесе й мильний пінний масаж для кожного."
+      full: >-
+        Прогрів у хамамі, скраб і пілінг рукавичкою кесе, мильний пінний масаж для кожного
+        гостя, басейн і відпочинок із трав'яним чаєм.
+    "Слов'янське паріння для компанії":
+      category: company
+      deposit: true
+      uses: [{resource: thermal}]
+      # 3 особи — 150 хв, 9000 грн; 4 особи — 180 хв, 11500 грн
+      guests:
+        kinds: [{key: adults, label: "Гості", min: 3, max: 4}]
+        tiers:
+          3: {duration_min: 150, price: 9000}
+          4: {duration_min: 180, price: 11500}
+      addons: *program_addons
+      short: "Для 3–4 гостей: паріння з індивідуальною пропаркою віниками."
+      full: >-
+        Прогрів у парній, ароматний перший пар, індивідуальна пропарка віниками для кожного
+        гостя, контрастні процедури, басейн і відпочинок із трав'яним чаєм.
+    "Банний вечір для компанії":
+      category: company
+      deposit: true
+      uses: [{resource: thermal}]
+      guests:
+        kinds: [{key: adults, label: "Гості", min: 6, max: 10, price: 2500}]
+      addons: *program_addons
+      short: "Для 6–10 гостей: парна й хамам із супроводом пар-майстра."
+      full: >-
+        Прогрів у парній і хамамі, колективна пропарка з пар-майстром, пілінг для тіла,
+        маски для обличчя, контрастні процедури, басейн і відпочинок із чаєм.
+
+    # --- Відпочинок у термальній зоні (без послуг пар-майстра) ---
+    "Хамам і басейн":
+      category: rest
+      staff: false
+      deposit: true
+      uses: [{resource: thermal}]
+      guests: &rest_guests_2
+        max_total: 6
+        kinds:
+          - {key: adults, label: "Дорослі", min: 1, max: 6, default: 2, included: 2, price: 1200}
+          - {key: kids8, label: "Діти 8–13 років", max: 5, price: 400}
+          - {key: kids7, label: "Діти до 7 років", max: 5}
+      addons: &rest_addons ["Додатковий час, 30 хв", "Додатковий час, 60 хв"]
+      short: "2 години для двох; кожен наступний дорослий — 1200 грн, разом до 6 осіб."
+    "Сауна і басейн":
+      category: rest
+      staff: false
+      deposit: true
+      uses: [{resource: thermal}]
+      guests: *rest_guests_2
+      addons: *rest_addons
+      short: "2 години для двох; кожен наступний дорослий — 1200 грн, разом до 6 осіб."
+    "Хамам, сауна і басейн":
+      category: rest
+      staff: false
+      deposit: true
+      uses: [{resource: thermal}]
+      guests:
+        max_total: 6
+        kinds:
+          - {key: adults, label: "Дорослі", min: 1, max: 6, default: 2, included: 3, price: 1200}
+          - {key: kids8, label: "Діти 8–13 років", max: 5, price: 400}
+          - {key: kids7, label: "Діти до 7 років", max: 5}
+      addons: *rest_addons
+      short: "2 години для 2–3 гостей; кожен наступний дорослий — 1200 грн, разом до 6 осіб."
+
+    # --- Відкритий банний вечір: групова подія з фіксованим часом ---
+    "Відкритий банний вечір":
+      category: event
+      deposit: true
+      event:
+        weekdays: [4]  # щоп'ятниці
+        start: "18:00"
+        end: "21:00"
+        capacity: 10
+        blocks: [thermal]  # термальна зона в цей час зайнята
+      guests:
+        kinds: [{key: adults, label: "Учасники", min: 1, max: 10, price: 2500}]
+      addons: *program_addons
+      short: "Щоп'ятниці 18:00–21:00, до 10 учасників. Парна, хамам, пілінги й колективна пропарка."
+      full: >-
+        Прогрів у хамамі й парній, самостійний пілінг сіллю та медом, маска для обличчя,
+        колективна пропарка з пар-майстром, басейн, контрастні процедури, чай і легке пригощення.
+
+    # --- Масаж: займає один кабінет; масаж для двох — обидва кабінети й двох майстрів ---
+    "Релакс-масаж":
+      category: massage
+      uses: [{resource: cabinet}]
+      variants: [{duration_min: 60, price: 1500}, {duration_min: 90, price: 2100}]
+      addons: &massage_addons
+        - "Парафінотерапія рук або стоп"
+        - "Тейпування (1 ділянка)"
+        - "Хамам і басейн після масажу (1 особа)"
+        - "Хамам і басейн після масажу (2 особи)"
+    "Оздоровчий масаж":
+      category: massage
+      uses: [{resource: cabinet}]
+      variants:
+        - {duration_min: 60, price: 1500}
+        - {duration_min: 90, price: 2100}
+        - {duration_min: 120, price: 2800}
+      addons: *massage_addons
+    "Масаж спини":
+      category: massage
+      uses: [{resource: cabinet}]
+      variants: [{duration_min: 30, price: 900}, {duration_min: 60, price: 1400}]
+      addons: *massage_addons
+    "Спортивний масаж":
+      category: massage
+      uses: [{resource: cabinet}]
+      variants: [{duration_min: 60, price: 1700}, {duration_min: 90, price: 2400}]
+      addons: *massage_addons
+    "Антицелюлітний масаж":
+      category: massage
+      uses: [{resource: cabinet}]
+      variants: [{duration_min: 45, price: 1300}, {duration_min: 60, price: 1600}]
+      addons: *massage_addons
+    "Масаж обличчя":
+      category: massage
+      uses: [{resource: cabinet}]
+      variants: [{duration_min: 45, price: 1100}, {duration_min: 60, price: 1400}]
+      addons: ["Парафінотерапія рук або стоп"]
+    "Масаж для двох":
+      category: massage
+      short: "Двоє гостей одночасно: двоє майстрів, обидва кабінети."
+      deposit: true
+      staff_count: 2  # двоє вільних майстрів одночасно
+      uses: [{resource: cabinet, units: 2}]
+      variants: [{duration_min: 60, price: 3400}, {duration_min: 90, price: 4600}]
+      addons: ["Парафінотерапія рук або стоп", "Хамам і басейн після масажу (2 особи)"]
+
+    # --- Додаткові послуги до спа-програм: тривалість програми не збільшують ---
+    "Пропарка віниками": {addon: true}
+    "Мильний пінний масаж": {addon: true}
+    "Пілінг всього тіла": {addon: true}
+    "Глиняна маска для тіла": {addon: true}
+    "Ванночка для ніг": {addon: true}
+
+    # --- Додатки до масажу ---
+    "Парафінотерапія рук або стоп": {addon: true, extra_min: 15}
+    "Тейпування (1 ділянка)": {addon: true}
+    # Хамам із басейном — лише разом із масажем: 1 год після нього
+    "Хамам і басейн після масажу (1 особа)":
+      addon: true
+      deposit: true
+      group: rest_after_massage
+      uses: [{resource: thermal, after_min: 60}]
+    "Хамам і басейн після масажу (2 особи)":
+      addon: true
+      deposit: true
+      group: rest_after_massage
+      uses: [{resource: thermal, after_min: 60}]
+
+    # --- Додатковий час відпочинку в термальній зоні ---
+    "Додатковий час, 30 хв": {addon: true, extra_min: 30, group: extra_time}
+    "Додатковий час, 60 хв": {addon: true, extra_min: 60, group: extra_time}
+
+demo:
+  # Ціни тут — базові й для адмінки; варіанти тривалості й ціни за кількістю гостей — у spa.
+  # Для додаткових послуг тривалість — умовна (не впливає на запис, див. extra_min).
+  services:
+    - {key: turkish, name: "Турецький хамам", duration_min: 90, price: 4000}
+    - {key: slavic, name: "Слов'янське паріння", duration_min: 90, price: 4000}
+    - {key: turkish2, name: "Турецький хамам для двох", duration_min: 120, price: 7000}
+    - {key: slavic2, name: "Слов'янське паріння для двох", duration_min: 120, price: 7000}
+    - {key: turkish_group, name: "Турецький хамам для компанії", duration_min: 150, price: 9000}
+    - {key: slavic_group, name: "Слов'янське паріння для компанії", duration_min: 150, price: 9000}
+    - {key: bath_evening, name: "Банний вечір для компанії", duration_min: 180, price: 0}
+    - {key: rest_hammam, name: "Хамам і басейн", duration_min: 120, price: 4500}
+    - {key: rest_sauna, name: "Сауна і басейн", duration_min: 120, price: 4500}
+    - {key: rest_all, name: "Хамам, сауна і басейн", duration_min: 120, price: 6500}
+    - {key: open_evening, name: "Відкритий банний вечір", duration_min: 180, price: 0}
+    - {key: relax, name: "Релакс-масаж", duration_min: 60, price: 1500}
+    - {key: wellness, name: "Оздоровчий масаж", duration_min: 60, price: 1500}
+    - {key: back, name: "Масаж спини", duration_min: 30, price: 900}
+    - {key: sport, name: "Спортивний масаж", duration_min: 60, price: 1700}
+    - {key: cellulite, name: "Антицелюлітний масаж", duration_min: 45, price: 1300}
+    - {key: face, name: "Масаж обличчя", duration_min: 45, price: 1100}
+    - {key: couple, name: "Масаж для двох", duration_min: 60, price: 3400}
+    # Додаткові послуги до спа-програм
+    - {key: a_brooms, name: "Пропарка віниками", duration_min: 15, price: 900}
+    - {key: a_foam, name: "Мильний пінний масаж", duration_min: 15, price: 900}
+    - {key: a_peeling, name: "Пілінг всього тіла", duration_min: 15, price: 700}
+    - {key: a_clay, name: "Глиняна маска для тіла", duration_min: 15, price: 800}
+    - {key: a_feet, name: "Ванночка для ніг", duration_min: 15, price: 150}
+    # Додатки до масажу
+    - {key: m_paraffin, name: "Парафінотерапія рук або стоп", duration_min: 15, price: 450}
+    - {key: m_tape, name: "Тейпування (1 ділянка)", duration_min: 15, price: 450}
+    - {key: m_rest1, name: "Хамам і басейн після масажу (1 особа)", duration_min: 60, price: 2200}
+    - {key: m_rest2, name: "Хамам і басейн після масажу (2 особи)", duration_min: 60, price: 3200}
+    # Додатковий час у термальній зоні
+    - {key: r_30, name: "Додатковий час, 30 хв", duration_min: 30, price: 800}
+    - {key: r_60, name: "Додатковий час, 60 хв", duration_min: 60, price: 1500}
+
+  # Масажисти, пар-майстри й «Термальна зона» — для відпочинку без майстра й банного вечора
+  masters:
+    - name: "Анна"
+      services: [relax, wellness, back, cellulite, face, couple]
+    - name: "Віктор"
+      services: [relax, wellness, back, sport, couple]
+    - name: "Дарина"
+      services: [relax, wellness, back, cellulite, face, couple]
+    - name: "Олег"
+      services: [relax, wellness, back, sport, cellulite, couple]
+    - name: "Сергій (пар-майстер)"
+      services: [turkish, slavic, turkish2, slavic2, turkish_group, slavic_group, bath_evening]
+    - name: "Наталія (пар-майстриня)"
+      services: [turkish, slavic, turkish2, slavic2, turkish_group, slavic_group, bath_evening]
+    - name: "Термальна зона"
+      services: [rest_hammam, rest_sauna, rest_all, open_evening]
+
+  # Пн 13:00–21:00, Вт–Нд 10:00–21:00, без перерви
+  schedule:
+    weekdays: [0, 1, 2, 3, 4, 5, 6]
+    start: "10:00"
+    end: "21:00"
+    overrides:
+      - {weekdays: [0], start: "13:00", end: "21:00"}
+
+  clients:
+    - {name: "Андрій", phone: "+380501112255"}
+    - {name: "Ірина", phone: "+380672223366"}
+    - {name: "Тарас", phone: "+380633334477"}
+    - {name: "Віра", phone: "+380934445588"}
+    - {name: "Максим", phone: "+380995556699"}
+    - {name: "Ольга", phone: "+380671234455"}
+
+  # Зайняті слоти на тиждень наперед. Майстри беруть шаблони по колу; запис, на який
+  # не вистачає ресурсів (кабінетів, термальної зони) чи часу, пропускається.
+  booking_days: 7
+  booking_patterns:
+    - [{time: "13:00", service: relax}, {time: "15:00", service: back}, {time: "18:00", service: wellness}]
+    - [{time: "13:00", service: slavic}, {time: "17:00", service: turkish}]
+    - [{time: "14:00", service: sport}, {time: "17:00", service: cellulite}]
+    - [{time: "10:00", service: rest_hammam}, {time: "15:00", service: turkish}]
+    - [{time: "16:00", service: couple}, {time: "19:00", service: face}]
+
+  # Відкритий банний вечір: на найближчу п'ятницю зайнято 4 місця, на наступну — 2
+  event_seats: [4, 2]
+
+  time_off:
+    - {master: "Олег", day_offset: 2, start: "13:00", end: "17:00", reason: "Особисті справи"}
